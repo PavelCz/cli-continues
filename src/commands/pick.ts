@@ -57,6 +57,73 @@ async function selectLaunchCwd(session: UnifiedSession, currentDir: string): Pro
   return resolveLaunchCwd(session, customDir);
 }
 
+type DirectoryGroup = { kind: 'directory'; cwd: string; sessions: UnifiedSession[] };
+type SessionSelection = { kind: 'session'; session: UnifiedSession };
+type DirectorySelection = DirectoryGroup | SessionSelection;
+type DirectoryOption =
+  | { value: DirectoryGroup; label: string; hint?: string }
+  | { value: SessionSelection; label: string; hint?: string };
+
+async function selectSessionByDirectory(sessions: UnifiedSession[]): Promise<UnifiedSession | null> {
+  const byDirectory = new Map<string, UnifiedSession[]>();
+  for (const session of sessions) {
+    const group = byDirectory.get(session.cwd) ?? [];
+    group.push(session);
+    byDirectory.set(session.cwd, group);
+  }
+
+  const groups = Array.from(
+    byDirectory,
+    ([cwd, directorySessions]): DirectoryGroup => ({
+      kind: 'directory',
+      cwd,
+      sessions: directorySessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()),
+    }),
+  ).sort((a, b) => b.sessions[0].updatedAt.getTime() - a.sessions[0].updatedAt.getTime());
+  const expanded = new Set<string>();
+  let initialValue: DirectorySelection | undefined;
+
+  while (true) {
+    const pickerOptions: DirectoryOption[] = [];
+    for (const group of groups) {
+      const isExpanded = expanded.has(group.cwd);
+      const count = group.sessions.length;
+      const latest = group.sessions[0].updatedAt.toISOString().slice(0, 16).replace('T', ' ');
+      pickerOptions.push({
+        value: group,
+        label: `${isExpanded ? '[-]' : '[+]'} ${group.cwd || '(unknown directory)'}`,
+        hint: `${count} session${count === 1 ? '' : 's'}, latest ${latest}`,
+      });
+
+      if (isExpanded) {
+        pickerOptions.push(
+          ...group.sessions.map((session) => ({
+            value: { kind: 'session' as const, session },
+            label: `  ${formatSessionForSelect(session)}`,
+            hint: session.id.slice(0, 8),
+          })),
+        );
+      }
+    }
+
+    const selected = await clack.select<DirectorySelection>({
+      message: `Select a directory or session (${sessions.length} sessions)`,
+      options: pickerOptions,
+      initialValue,
+      maxItems: 15,
+    });
+
+    if (clack.isCancel(selected)) {
+      clack.cancel('Cancelled');
+      return null;
+    }
+
+    if (selected.kind === 'session') return selected.session;
+    if (!expanded.delete(selected.cwd)) expanded.add(selected.cwd);
+    initialValue = selected;
+  }
+}
+
 /**
  * Main interactive TUI command
  */
@@ -141,9 +208,10 @@ export async function interactivePick(
 
     // Step 1: Filter by CLI tool (optional) -- skip if source already specified or auto-selected
     let filteredSessions = hasCwdSessions ? cwdSessions : sessions;
+    let selectedScope: 'cwd' | 'all' = hasCwdSessions ? 'cwd' : 'all';
 
     if (!autoSelectedSession && !options.source && sessions.length > 0) {
-      let scope: 'cwd' | 'all' = hasCwdSessions ? 'cwd' : 'all';
+      let scope = selectedScope;
 
       while (true) {
         const pool = scope === 'cwd' ? cwdSessions : sessions;
@@ -225,22 +293,20 @@ export async function interactivePick(
         // "All tools": use entire pool
         if (toolFilter === 'all-in-scope') {
           filteredSessions = pool;
+          selectedScope = scope;
           break;
         }
 
         // Specific tool: filter by source
         filteredSessions = pool.filter((sess) => sess.source === toolFilter);
+        selectedScope = scope;
         break;
       }
     }
 
     // Step 2: Select session -- show all with scrolling (maxItems controls viewport)
     const PAGE_SIZE = 500;
-    const sessionOptions = filteredSessions.slice(0, PAGE_SIZE).map((sess) => ({
-      value: sess,
-      label: formatSessionForSelect(sess),
-      hint: sess.id.slice(0, 8),
-    }));
+    const visibleSessions = filteredSessions.slice(0, PAGE_SIZE);
 
     if (filteredSessions.length > PAGE_SIZE) {
       clack.log.info(
@@ -256,10 +322,18 @@ export async function interactivePick(
       console.log(chalk.gray(`  Auto-selected the only matching session:`));
       console.log(`  ${formatSessionForSelect(session)}`);
       console.log();
+    } else if (selectedScope === 'all') {
+      const selectedSession = await selectSessionByDirectory(visibleSessions);
+      if (!selectedSession) return;
+      session = selectedSession;
     } else {
       const selectedSession = await clack.select({
         message: `Select a session (${filteredSessions.length} available)`,
-        options: sessionOptions,
+        options: visibleSessions.map((sess) => ({
+          value: sess,
+          label: formatSessionForSelect(sess),
+          hint: sess.id.slice(0, 8),
+        })),
         maxItems: 15,
       });
 
