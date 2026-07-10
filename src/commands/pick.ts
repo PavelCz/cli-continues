@@ -133,6 +133,7 @@ export async function interactivePick(
     noTui?: boolean;
     rebuild?: boolean;
     all?: boolean;
+    allTools?: boolean;
     forwardArgs?: string[];
     preset?: string;
     configPath?: string;
@@ -210,7 +211,7 @@ export async function interactivePick(
     let filteredSessions = hasCwdSessions ? cwdSessions : sessions;
     let selectedScope: 'cwd' | 'all' = hasCwdSessions ? 'cwd' : 'all';
 
-    if (!autoSelectedSession && !options.source && sessions.length > 0) {
+    if (!autoSelectedSession && !options.source && !options.allTools && sessions.length > 0) {
       let scope = selectedScope;
 
       while (true) {

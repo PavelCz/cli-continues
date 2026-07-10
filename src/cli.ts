@@ -93,6 +93,7 @@ program
     `
 Quick start:
   $ continues
+  $ continues --all
   $ npx continues --preset full
   $ continues claude 1
 
@@ -118,7 +119,7 @@ Preset guide:
   full     -> maximum detail for handoff, debugging, and audits
 
 Power tips:
-  - Use --all to bypass current-directory filtering in pick mode
+  - Use --all to open every discovered session across all tools
   - Use --cwd <dir> to launch a resumed session from a different directory
   - Forward raw args to target tools after -- (example: continues claude 1 -- --help)
   - Combine --config .continues.yml with --preset for project defaults + per-run overrides
@@ -131,11 +132,12 @@ Aliases:
   );
 
 // Default command - Interactive TUI
-program.option('-a, --all', 'Show all sessions globally (skip directory filtering)').action(async (options) => {
+program.option('-a, --all', 'Open all sessions across all tools').action(async (options) => {
   const globalOptions = program.opts();
   await interactivePick(
     {
       all: options.all,
+      allTools: options.all,
       forwardArgs: tailArgs,
       preset: globalOptions.preset as string | undefined,
       configPath: globalOptions.config as string | undefined,

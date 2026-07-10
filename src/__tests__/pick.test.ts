@@ -142,14 +142,13 @@ describe('interactivePick native resume', () => {
     testState.select.mockImplementation(
       async (config: { options: Array<{ value: Record<string, unknown>; label: string }> }) => {
         selectCall += 1;
-        if (selectCall === 1) return 'all-in-scope';
-        if (selectCall === 6) return 'current';
+        if (selectCall === 5) return 'current';
 
         snapshots.push(config.options);
         const projectA = config.options.find(
           (option) => option.value.kind === 'directory' && option.value.cwd === '/tmp/project-a',
         );
-        if (selectCall === 2 || selectCall === 3 || selectCall === 4) return projectA?.value;
+        if (selectCall === 1 || selectCall === 2 || selectCall === 3) return projectA?.value;
         return config.options.find(
           (option) =>
             option.value.kind === 'session' && (option.value.session as UnifiedSession | undefined)?.id === 'newer-a',
@@ -157,7 +156,7 @@ describe('interactivePick native resume', () => {
       },
     );
 
-    await interactivePick({ all: true }, { isTTY: true, supportsColor: false, version: '0.0.0-test' });
+    await interactivePick({ all: true, allTools: true }, { isTTY: true, supportsColor: false, version: '0.0.0-test' });
 
     const directoryCwds = snapshots[0]
       .filter((option) => option.value.kind === 'directory')
