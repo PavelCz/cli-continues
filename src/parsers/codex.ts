@@ -33,6 +33,7 @@ import {
 const CODEX_HOME_DIR = process.env.CODEX_HOME || path.join(homeDir(), '.codex');
 const CODEX_SESSIONS_DIR = path.join(CODEX_HOME_DIR, 'sessions');
 const CODEX_ARCHIVED_SESSIONS_DIR = path.join(CODEX_HOME_DIR, 'archived_sessions');
+const CODEX_SESSION_INDEX_FILE = path.join(CODEX_HOME_DIR, 'session_index.jsonl');
 
 const MAX_EXACT_LINE_COUNT_BYTES = 1024 * 1024;
 const MAX_METADATA_SCAN_BYTES = 1024 * 1024;
@@ -46,6 +47,19 @@ async function findSessionFiles(): Promise<string[]> {
       match: (entry) => entry.name.startsWith('rollout-') && entry.name.endsWith('.jsonl'),
     }),
   );
+}
+
+async function loadSessionNames(): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  await scanJsonlFile(CODEX_SESSION_INDEX_FILE, (parsed) => {
+    if (!parsed || typeof parsed !== 'object') return 'continue';
+    const record = parsed as Record<string, unknown>;
+    if (typeof record.id !== 'string' || typeof record.thread_name !== 'string') return 'continue';
+    const name = cleanSummary(record.thread_name, 200);
+    if (name) names.set(record.id, name);
+    return 'continue';
+  });
+  return names;
 }
 
 /**
@@ -109,6 +123,7 @@ function parseFilename(filename: string): { timestamp: Date; id: string } | null
  */
 export async function parseCodexSessions(options: SessionParseOptions = {}): Promise<UnifiedSession[]> {
   const files = await findSessionFiles();
+  const sessionNames = await loadSessionNames();
   const parsedSessions = await mapConcurrent(files, 16, async (filePath): Promise<UnifiedSession | null> => {
     try {
       const filename = path.basename(filePath);
@@ -144,6 +159,7 @@ export async function parseCodexSessions(options: SessionParseOptions = {}): Pro
         repo,
         branch,
         gitSha,
+        name: sessionNames.get(parsed.id),
         lines: stats.lines,
         bytes: stats.bytes,
         createdAt:

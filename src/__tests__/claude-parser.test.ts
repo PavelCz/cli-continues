@@ -63,6 +63,24 @@ afterEach(() => {
 });
 
 describe('claude parser hardening', () => {
+  it('uses the latest custom title as the session name in lightweight parsing', async () => {
+    const configDir = makeConfigDir();
+    const id = '55555555-5555-4555-8555-555555555555';
+    const cwd = '/tmp/claude-project';
+    const projectDir = path.join(configDir, 'projects', '-tmp-claude-project');
+    writeJsonl(path.join(projectDir, `${id}.jsonl`), [
+      ...makeRows({ id, first: '2026-04-15T10:00:00.000Z', last: '2026-04-15T10:05:00.000Z', cwd }),
+      { type: 'custom-title', customTitle: 'Initial name', sessionId: id },
+      { type: 'custom-title', customTitle: 'Explicit session name', sessionId: id },
+    ]);
+
+    const { parseClaudeSessions } = await loadClaudeParser(configDir);
+    const [session] = await parseClaudeSessions({ lightweight: true });
+
+    expect(session.name).toBe('Explicit session name');
+    expect(session.summary).toBe(`Start ${id}`.slice(0, 50));
+  });
+
   it('normalizes Windows cwd paths for direct Claude project lookup', async () => {
     const configDir = makeConfigDir();
     const id = '33333333-3333-4333-8333-333333333333';

@@ -36,6 +36,34 @@ afterEach(() => {
 });
 
 describe('codex parser hardening', () => {
+  it('uses the latest thread name from the session index', async () => {
+    const home = makeCodexHome();
+    const id = 'named-session-id';
+
+    writeRollout(home, '', 'session_index.jsonl', [
+      { id, thread_name: 'Initial name', updated_at: '2026-04-15T10:00:00.000Z' },
+      { id, thread_name: 'Explicit session name', updated_at: '2026-04-15T10:05:00.000Z' },
+    ]);
+    writeRollout(home, path.join('sessions', '2026', '04', '15'), `rollout-2026-04-15T10-00-00-${id}.jsonl`, [
+      {
+        timestamp: '2026-04-15T10:00:00.000Z',
+        type: 'session_meta',
+        payload: { id, cwd: '/tmp/project' },
+      },
+      {
+        timestamp: '2026-04-15T10:00:01.000Z',
+        type: 'event_msg',
+        payload: { type: 'user_message', message: 'First user message' },
+      },
+    ]);
+
+    const { parseCodexSessions } = await loadCodexParser(home);
+    const [session] = await parseCodexSessions({ lightweight: true });
+
+    expect(session.name).toBe('Explicit session name');
+    expect(session.summary).toBe('First user message');
+  });
+
   it('discovers sessions from both active and archived session trees', async () => {
     const home = makeCodexHome();
 

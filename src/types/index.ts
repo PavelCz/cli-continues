@@ -23,6 +23,8 @@ export interface UnifiedSession {
   branch?: string;
   /** Git commit SHA when the source tool records it */
   gitSha?: string;
+  /** Explicit user-visible session name from the source tool */
+  name?: string;
   /** Session summary/description */
   summary?: string;
   /** Number of conversation turns */

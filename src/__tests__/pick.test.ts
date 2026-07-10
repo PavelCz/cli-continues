@@ -59,6 +59,7 @@ vi.mock('../commands/_shared.js', () => ({
 }));
 
 const { interactivePick } = await import('../commands/pick.js');
+const { formatSessionForSelect } = await import('../display/format.js');
 
 function makeSession(id: string, source: SessionSource, cwd = process.cwd()): UnifiedSession {
   const now = new Date('2026-04-15T00:00:00.000Z');
@@ -114,5 +115,20 @@ describe('interactivePick native resume', () => {
       undefined,
       expect.any(Object),
     );
+  });
+});
+
+describe('session picker labels', () => {
+  it('prefers the explicit session name over the first-message summary', () => {
+    const session = {
+      ...makeSession('named-session', 'codex'),
+      name: 'Explicit session name',
+      summary: 'First prompt',
+    };
+
+    const label = formatSessionForSelect(session);
+
+    expect(label).toContain('Explicit session name');
+    expect(label).not.toContain('First prompt');
   });
 });
