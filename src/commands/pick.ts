@@ -7,9 +7,55 @@ import { maybePromptGithubStar } from '../display/star-prompt.js';
 import type { SessionSource, UnifiedSession } from '../types/index.js';
 import type { HandoffForwardingOptions } from '../utils/forward-flags.js';
 import { getAllSessions, getSessionsByCwd, getSessionsBySource } from '../utils/index.js';
-import { getResumeCommand, nativeResume, resolveCrossToolForwarding, resume } from '../utils/resume.js';
+import {
+  getResumeCommand,
+  resolveCrossToolForwarding,
+  resolveLaunchCwd,
+  resume,
+  withLaunchCwd,
+} from '../utils/resume.js';
 import { matchesCwd } from '../utils/slug.js';
-import { checkSingleToolAutoResume, selectTargetTool, showForwardingWarnings } from './_shared.js';
+import { selectTargetTool, showForwardingWarnings } from './_shared.js';
+
+async function selectLaunchCwd(session: UnifiedSession, currentDir: string): Promise<string | null> {
+  const sessionDir = session.cwd || currentDir;
+  const selected = await clack.select({
+    message: 'Launch from:',
+    options: [
+      { value: 'session', label: `Session directory: ${sessionDir}` },
+      { value: 'current', label: `Current directory: ${currentDir}` },
+      { value: 'custom', label: 'Enter a directory' },
+    ],
+    initialValue: 'session',
+  });
+
+  if (clack.isCancel(selected)) {
+    clack.cancel('Cancelled');
+    return null;
+  }
+
+  if (selected === 'session') return sessionDir;
+  if (selected === 'current') return currentDir;
+
+  const customDir = await clack.text({
+    message: 'Working directory:',
+    placeholder: currentDir,
+    validate: (value) => {
+      try {
+        resolveLaunchCwd(session, value);
+      } catch (error) {
+        return (error as Error).message;
+      }
+    },
+  });
+
+  if (clack.isCancel(customDir)) {
+    clack.cancel('Cancelled');
+    return null;
+  }
+
+  return resolveLaunchCwd(session, customDir);
+}
 
 /**
  * Main interactive TUI command
@@ -91,46 +137,12 @@ export async function interactivePick(
       clack.log.info(chalk.gray(`No sessions in ${dirName}, showing all`));
     }
 
-    // Auto-resume: if exactly 1 session matches cwd, skip picker
-    if (cwdSessions.length === 1 && !options.source) {
-      const session = cwdSessions[0];
-      console.log(chalk.gray(`  Auto-selected the only matching session:`));
-      console.log(`  ${formatSessionForSelect(session)}`);
-      console.log();
+    const autoSelectedSession = cwdSessions.length === 1 && !options.source ? cwdSessions[0] : undefined;
 
-      if (await checkSingleToolAutoResume(session, nativeResume)) return;
-
-      const targetTool = await selectTargetTool(session, { excludeSource: false });
-      if (!targetTool) return;
-
-      const forwarding: HandoffForwardingOptions | undefined =
-        targetTool !== session.source ? { tailArgs: options.forwardArgs } : undefined;
-
-      if (forwarding) {
-        const resolved = resolveCrossToolForwarding(targetTool, forwarding);
-        await showForwardingWarnings(resolved.warnings, context);
-      }
-
-      console.log();
-      clack.log.info(`Working directory: ${chalk.cyan(session.cwd)}`);
-      clack.log.info(`Command: ${chalk.cyan(getResumeCommand(session, targetTool, forwarding))}`);
-      console.log();
-      clack.log.step(`Handing off to ${targetTool}...`);
-      clack.outro(`Launching ${targetTool}`);
-
-      if (session.cwd) process.chdir(session.cwd);
-      await resume(session, targetTool, 'inline', forwarding, {
-        preset: options.preset,
-        configPath: options.configPath,
-        chain: options.chain,
-      });
-      return;
-    }
-
-    // Step 1: Filter by CLI tool (optional) -- skip if source already specified
+    // Step 1: Filter by CLI tool (optional) -- skip if source already specified or auto-selected
     let filteredSessions = hasCwdSessions ? cwdSessions : sessions;
 
-    if (!options.source && sessions.length > 0) {
+    if (!autoSelectedSession && !options.source && sessions.length > 0) {
       let scope: 'cwd' | 'all' = hasCwdSessions ? 'cwd' : 'all';
 
       while (true) {
@@ -238,22 +250,34 @@ export async function interactivePick(
       );
     }
 
-    const selectedSession = await clack.select({
-      message: `Select a session (${filteredSessions.length} available)`,
-      options: sessionOptions,
-      maxItems: 15,
-    });
+    let session: UnifiedSession;
+    if (autoSelectedSession) {
+      session = autoSelectedSession;
+      console.log(chalk.gray(`  Auto-selected the only matching session:`));
+      console.log(`  ${formatSessionForSelect(session)}`);
+      console.log();
+    } else {
+      const selectedSession = await clack.select({
+        message: `Select a session (${filteredSessions.length} available)`,
+        options: sessionOptions,
+        maxItems: 15,
+      });
 
-    if (clack.isCancel(selectedSession)) {
-      clack.cancel('Cancelled');
-      return;
+      if (clack.isCancel(selectedSession)) {
+        clack.cancel('Cancelled');
+        return;
+      }
+
+      session = selectedSession as UnifiedSession;
     }
 
-    const session = selectedSession as UnifiedSession;
-
     // Step 3: Select target tool
-    const targetTool = await selectTargetTool(session);
+    const targetTool = await selectTargetTool(session, { excludeSource: false });
     if (!targetTool) return;
+
+    const launchCwd = await selectLaunchCwd(session, currentDir);
+    if (!launchCwd) return;
+    const launchSession = withLaunchCwd(session, launchCwd);
 
     const forwarding: HandoffForwardingOptions | undefined =
       targetTool !== session.source ? { tailArgs: options.forwardArgs } : undefined;
@@ -265,16 +289,15 @@ export async function interactivePick(
 
     // Step 4: Show what will happen and resume
     console.log();
-    clack.log.info(`Working directory: ${chalk.cyan(session.cwd)}`);
-    clack.log.info(`Command: ${chalk.cyan(getResumeCommand(session, targetTool, forwarding))}`);
+    clack.log.info(`Working directory: ${chalk.cyan(launchCwd)}`);
+    clack.log.info(`Command: ${chalk.cyan(getResumeCommand(launchSession, targetTool, forwarding))}`);
     console.log();
 
     clack.log.step(`Handing off to ${targetTool}...`);
     clack.outro(`Launching ${targetTool}`);
 
-    // Change to session's working directory and resume
-    if (session.cwd) process.chdir(session.cwd);
-    await resume(session, targetTool, 'inline', forwarding, {
+    process.chdir(launchCwd);
+    await resume(launchSession, targetTool, 'inline', forwarding, {
       preset: options.preset,
       configPath: options.configPath,
       chain: options.chain,

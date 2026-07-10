@@ -1,15 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionSource, UnifiedSession } from '../types/index.js';
 
 const testState = vi.hoisted(() => ({
-  checkSingleToolAutoResume: vi.fn(),
   getAllSessions: vi.fn(),
   getSessionsByCwd: vi.fn(),
   getSessionsBySource: vi.fn(),
-  nativeResume: vi.fn(),
+  resolveLaunchCwd: vi.fn((session: UnifiedSession, cwd?: string) => cwd || session.cwd),
   resume: vi.fn(),
   select: vi.fn(),
   selectTargetTool: vi.fn(),
+  text: vi.fn(),
+  withLaunchCwd: vi.fn((session: UnifiedSession, cwd: string) => ({ ...session, cwd })),
 }));
 
 vi.mock('@clack/prompts', () => ({
@@ -27,6 +28,7 @@ vi.mock('@clack/prompts', () => ({
     start: vi.fn(),
     stop: vi.fn(),
   })),
+  text: testState.text,
 }));
 
 vi.mock('../display/banner.js', () => ({
@@ -45,13 +47,13 @@ vi.mock('../utils/index.js', () => ({
 
 vi.mock('../utils/resume.js', () => ({
   getResumeCommand: vi.fn(() => 'continues resume selected'),
-  nativeResume: testState.nativeResume,
   resolveCrossToolForwarding: vi.fn(() => ({ warnings: [] })),
+  resolveLaunchCwd: testState.resolveLaunchCwd,
   resume: testState.resume,
+  withLaunchCwd: testState.withLaunchCwd,
 }));
 
 vi.mock('../commands/_shared.js', () => ({
-  checkSingleToolAutoResume: testState.checkSingleToolAutoResume,
   selectTargetTool: testState.selectTargetTool,
   showForwardingWarnings: vi.fn(async () => undefined),
 }));
@@ -72,29 +74,45 @@ function makeSession(id: string, source: SessionSource, cwd = process.cwd()): Un
   };
 }
 
-describe('interactivePick cwd fallback', () => {
+describe('interactivePick native resume', () => {
+  let originalCwd: string;
+
   beforeEach(() => {
+    originalCwd = process.cwd();
     process.exitCode = undefined;
-    testState.checkSingleToolAutoResume.mockReset();
     testState.getAllSessions.mockReset();
     testState.getSessionsByCwd.mockReset();
     testState.getSessionsBySource.mockReset();
-    testState.nativeResume.mockReset();
+    testState.resolveLaunchCwd.mockClear();
     testState.resume.mockReset();
     testState.select.mockReset();
     testState.selectTargetTool.mockReset();
+    testState.text.mockReset();
+    testState.withLaunchCwd.mockClear();
   });
 
-  it('auto-resumes a single cwd session found after full fallback loading', async () => {
+  afterEach(() => {
+    process.chdir(originalCwd);
+  });
+
+  it('lets an auto-selected session resume natively from a custom directory', async () => {
     const session = makeSession('only-cwd-session', 'codex');
     testState.getSessionsByCwd.mockResolvedValue([]);
     testState.getAllSessions.mockResolvedValue([session]);
-    testState.checkSingleToolAutoResume.mockResolvedValue(true);
+    testState.selectTargetTool.mockResolvedValue('codex');
+    testState.select.mockResolvedValue('custom');
+    testState.text.mockResolvedValue('/tmp');
 
     await interactivePick({}, { isTTY: true, supportsColor: false, version: '0.0.0-test' });
 
     expect(testState.getAllSessions).toHaveBeenCalledTimes(1);
-    expect(testState.checkSingleToolAutoResume).toHaveBeenCalledWith(session, testState.nativeResume);
-    expect(testState.select).not.toHaveBeenCalled();
+    expect(testState.selectTargetTool).toHaveBeenCalledWith(session, { excludeSource: false });
+    expect(testState.resume).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: '/tmp' }),
+      'codex',
+      'inline',
+      undefined,
+      expect.any(Object),
+    );
   });
 });
