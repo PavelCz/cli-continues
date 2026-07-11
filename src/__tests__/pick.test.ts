@@ -8,6 +8,7 @@ const testState = vi.hoisted(() => ({
   resolveLaunchCwd: vi.fn(
     (session: UnifiedSession, cwd?: string) => cwd || session.cwd,
   ),
+  peekSession: vi.fn(async () => undefined),
   resume: vi.fn(),
   select: vi.fn(),
   selectTargetTool: vi.fn(),
@@ -63,6 +64,10 @@ vi.mock("../commands/_shared.js", () => ({
   showForwardingWarnings: vi.fn(async () => undefined),
 }));
 
+vi.mock("../utils/peek.js", () => ({
+  peekSession: testState.peekSession,
+}));
+
 const { interactivePick } = await import("../commands/pick.js");
 const { formatSessionForSelect } = await import("../display/format.js");
 
@@ -93,6 +98,7 @@ describe("interactivePick native resume", () => {
     testState.getAllSessions.mockReset();
     testState.getSessionsByCwd.mockReset();
     testState.getSessionsBySource.mockReset();
+    testState.peekSession.mockClear();
     testState.resolveLaunchCwd.mockClear();
     testState.resume.mockReset();
     testState.select.mockReset();
@@ -165,7 +171,8 @@ describe("interactivePick native resume", () => {
         options: Array<{ value: Record<string, unknown>; label: string }>;
       }) => {
         selectCall += 1;
-        if (selectCall === 5) return "current";
+        if (selectCall === 5) return "resume";
+        if (selectCall === 6) return "current";
 
         snapshots.push(config.options);
         const projectA = config.options.find(
@@ -251,6 +258,7 @@ describe("interactivePick native resume", () => {
                 "current-dir-session",
           )?.value;
         }
+        if (selectCall === 3) return "resume";
         return "session";
       },
     );
@@ -266,6 +274,40 @@ describe("interactivePick native resume", () => {
     expect(directoryCwds).toEqual([process.cwd(), "/tmp/project-b"]);
     expect(testState.resume).toHaveBeenCalledWith(
       expect.objectContaining({ id: "current-dir-session" }),
+      "codex",
+      "inline",
+      undefined,
+      expect.any(Object),
+    );
+  });
+  it("peeks at a session and returns to the action menu before resuming", async () => {
+    const sessionA = makeSession("session-a", "codex");
+    const sessionB = makeSession("session-b", "codex");
+    testState.getSessionsByCwd.mockResolvedValue([sessionA, sessionB]);
+    testState.selectTargetTool.mockResolvedValue("codex");
+    let selectCall = 0;
+    testState.select.mockImplementation(
+      async (config: { options: Array<{ value: unknown; label: string }> }) => {
+        selectCall += 1;
+        if (selectCall === 1) return "all-in-scope"; // tool filter
+        if (selectCall === 2) return sessionA; // session select
+        if (selectCall === 3) return "peek"; // action menu → peek
+        if (selectCall === 4) return "back"; // action menu → reselect
+        if (selectCall === 5) return sessionB; // session select again
+        if (selectCall === 6) return "resume"; // action menu → resume
+        return "session"; // launch cwd
+      },
+    );
+
+    await interactivePick(
+      {},
+      { isTTY: true, supportsColor: false, version: "0.0.0-test" },
+    );
+
+    expect(testState.peekSession).toHaveBeenCalledTimes(1);
+    expect(testState.peekSession).toHaveBeenCalledWith(sessionA);
+    expect(testState.resume).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "session-b" }),
       "codex",
       "inline",
       undefined,
