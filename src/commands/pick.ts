@@ -1,52 +1,45 @@
-import * as clack from "@clack/prompts";
-import chalk from "chalk";
-import { showBanner } from "../display/banner.js";
-import { formatSessionForSelect, sourceColors } from "../display/format.js";
-import { showNoSessionsHelp } from "../display/help.js";
-import { maybePromptGithubStar } from "../display/star-prompt.js";
-import type { SessionSource, UnifiedSession } from "../types/index.js";
-import type { HandoffForwardingOptions } from "../utils/forward-flags.js";
-import {
-  getAllSessions,
-  getSessionsByCwd,
-  getSessionsBySource,
-} from "../utils/index.js";
+import * as clack from '@clack/prompts';
+import chalk from 'chalk';
+import { showBanner } from '../display/banner.js';
+import { formatSessionForSelect, sourceColors } from '../display/format.js';
+import { showNoSessionsHelp } from '../display/help.js';
+import { maybePromptGithubStar } from '../display/star-prompt.js';
+import type { SessionSource, UnifiedSession } from '../types/index.js';
+import type { HandoffForwardingOptions } from '../utils/forward-flags.js';
+import { getAllSessions, getSessionsByCwd, getSessionsBySource } from '../utils/index.js';
+import { peekSession } from '../utils/peek.js';
 import {
   getResumeCommand,
   resolveCrossToolForwarding,
   resolveLaunchCwd,
   resume,
   withLaunchCwd,
-} from "../utils/resume.js";
-import { peekSession } from "../utils/peek.js";
-import { matchesCwd } from "../utils/slug.js";
-import { selectTargetTool, showForwardingWarnings } from "./_shared.js";
+} from '../utils/resume.js';
+import { matchesCwd } from '../utils/slug.js';
+import { selectTargetTool, showForwardingWarnings } from './_shared.js';
 
-async function selectLaunchCwd(
-  session: UnifiedSession,
-  currentDir: string,
-): Promise<string | null> {
+async function selectLaunchCwd(session: UnifiedSession, currentDir: string): Promise<string | null> {
   const sessionDir = session.cwd || currentDir;
   const selected = await clack.select({
-    message: "Launch from:",
+    message: 'Launch from:',
     options: [
-      { value: "session", label: `Session directory: ${sessionDir}` },
-      { value: "current", label: `Current directory: ${currentDir}` },
-      { value: "custom", label: "Enter a directory" },
+      { value: 'session', label: `Session directory: ${sessionDir}` },
+      { value: 'current', label: `Current directory: ${currentDir}` },
+      { value: 'custom', label: 'Enter a directory' },
     ],
-    initialValue: "session",
+    initialValue: 'session',
   });
 
   if (clack.isCancel(selected)) {
-    clack.cancel("Cancelled");
+    clack.cancel('Cancelled');
     return null;
   }
 
-  if (selected === "session") return sessionDir;
-  if (selected === "current") return currentDir;
+  if (selected === 'session') return sessionDir;
+  if (selected === 'current') return currentDir;
 
   const customDir = await clack.text({
-    message: "Working directory:",
+    message: 'Working directory:',
     placeholder: currentDir,
     validate: (value) => {
       try {
@@ -58,7 +51,7 @@ async function selectLaunchCwd(
   });
 
   if (clack.isCancel(customDir)) {
-    clack.cancel("Cancelled");
+    clack.cancel('Cancelled');
     return null;
   }
 
@@ -66,11 +59,11 @@ async function selectLaunchCwd(
 }
 
 type DirectoryGroup = {
-  kind: "directory";
+  kind: 'directory';
   cwd: string;
   sessions: UnifiedSession[];
 };
-type SessionSelection = { kind: "session"; session: UnifiedSession };
+type SessionSelection = { kind: 'session'; session: UnifiedSession };
 type DirectorySelection = DirectoryGroup | SessionSelection;
 type DirectoryOption =
   | { value: DirectoryGroup; label: string; hint?: string }
@@ -90,20 +83,16 @@ async function selectSessionByDirectory(
   const groups = Array.from(
     byDirectory,
     ([cwd, directorySessions]): DirectoryGroup => ({
-      kind: "directory",
+      kind: 'directory',
       cwd,
-      sessions: directorySessions.sort(
-        (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
-      ),
+      sessions: directorySessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()),
     }),
   ).sort((a, b) => {
     // Pin groups matching the current directory first, then sort by recency
     const aCurrent = matchesCwd(a.cwd, currentDir);
     const bCurrent = matchesCwd(b.cwd, currentDir);
     if (aCurrent !== bCurrent) return aCurrent ? -1 : 1;
-    return (
-      b.sessions[0].updatedAt.getTime() - a.sessions[0].updatedAt.getTime()
-    );
+    return b.sessions[0].updatedAt.getTime() - a.sessions[0].updatedAt.getTime();
   });
   const expanded = new Set<string>();
   let initialValue: DirectorySelection | undefined;
@@ -113,20 +102,17 @@ async function selectSessionByDirectory(
     for (const group of groups) {
       const isExpanded = expanded.has(group.cwd);
       const count = group.sessions.length;
-      const latest = group.sessions[0].updatedAt
-        .toISOString()
-        .slice(0, 16)
-        .replace("T", " ");
+      const latest = group.sessions[0].updatedAt.toISOString().slice(0, 16).replace('T', ' ');
       pickerOptions.push({
         value: group,
-        label: `${isExpanded ? "[-]" : "[+]"} ${group.cwd || "(unknown directory)"}`,
-        hint: `${count} session${count === 1 ? "" : "s"}, latest ${latest}`,
+        label: `${isExpanded ? '[-]' : '[+]'} ${group.cwd || '(unknown directory)'}`,
+        hint: `${count} session${count === 1 ? '' : 's'}, latest ${latest}`,
       });
 
       if (isExpanded) {
         pickerOptions.push(
           ...group.sessions.map((session) => ({
-            value: { kind: "session" as const, session },
+            value: { kind: 'session' as const, session },
             label: `  ${formatSessionForSelect(session)}`,
             hint: session.id.slice(0, 8),
           })),
@@ -142,11 +128,11 @@ async function selectSessionByDirectory(
     });
 
     if (clack.isCancel(selected)) {
-      clack.cancel("Cancelled");
+      clack.cancel('Cancelled');
       return null;
     }
 
-    if (selected.kind === "session") return selected.session;
+    if (selected.kind === 'session') return selected.session;
     if (!expanded.delete(selected.cwd)) expanded.add(selected.cwd);
     initialValue = selected;
   }
@@ -172,42 +158,27 @@ export async function interactivePick(
   try {
     // If not TTY or --no-tui, fall back to list
     if (!context.isTTY || options.noTui) {
-      console.log(
-        chalk.yellow(
-          'Interactive mode requires a TTY. Use "continues list" instead.',
-        ),
-      );
+      console.log(chalk.yellow('Interactive mode requires a TTY. Use "continues list" instead.'));
       process.exitCode = 1;
       return;
     }
 
-    const bannerCancelled = await showBanner(
-      context.version,
-      context.supportsColor,
-    );
+    const bannerCancelled = await showBanner(context.version, context.supportsColor);
     if (bannerCancelled) return;
     await maybePromptGithubStar();
-    clack.intro(
-      chalk.bold("continue") +
-        chalk.cyan.bold("s") +
-        chalk.gray(" — session picker"),
-    );
+    clack.intro(chalk.bold('continue') + chalk.cyan.bold('s') + chalk.gray(' — session picker'));
 
     const currentDir = process.cwd();
-    const dirName = currentDir.split("/").pop() || currentDir;
+    const dirName = currentDir.split('/').pop() || currentDir;
     let sessions: UnifiedSession[] = [];
     let cwdSessions: UnifiedSession[] = [];
     let allSessionsLoaded = false;
 
     const refreshCwdSessions = (): void => {
-      cwdSessions = options.all
-        ? []
-        : sessions.filter((sess) => matchesCwd(sess.cwd, currentDir));
+      cwdSessions = options.all ? [] : sessions.filter((sess) => matchesCwd(sess.cwd, currentDir));
     };
 
-    const loadAllSessions = async (
-      message = "Loading all sessions...",
-    ): Promise<UnifiedSession[]> => {
+    const loadAllSessions = async (message = 'Loading all sessions...'): Promise<UnifiedSession[]> => {
       if (allSessionsLoaded) return sessions;
       const loading = clack.spinner();
       loading.start(message);
@@ -219,19 +190,12 @@ export async function interactivePick(
     };
 
     const s = clack.spinner();
-    s.start("Loading sessions...");
+    s.start('Loading sessions...');
     if (options.source) {
-      sessions = await getSessionsBySource(
-        options.source as SessionSource,
-        options.rebuild,
-      );
-      cwdSessions = options.all
-        ? []
-        : sessions.filter((sess) => matchesCwd(sess.cwd, currentDir));
+      sessions = await getSessionsBySource(options.source as SessionSource, options.rebuild);
+      cwdSessions = options.all ? [] : sessions.filter((sess) => matchesCwd(sess.cwd, currentDir));
     } else {
-      cwdSessions = options.all
-        ? []
-        : await getSessionsByCwd(currentDir, options.rebuild);
+      cwdSessions = options.all ? [] : await getSessionsByCwd(currentDir, options.rebuild);
       if (cwdSessions.length > 0) {
         sessions = cwdSessions;
       } else {
@@ -245,7 +209,7 @@ export async function interactivePick(
 
     if (sessions.length === 0) {
       showNoSessionsHelp();
-      clack.outro(chalk.gray("No sessions to resume"));
+      clack.outro(chalk.gray('No sessions to resume'));
       return;
     }
 
@@ -255,23 +219,17 @@ export async function interactivePick(
       clack.log.info(chalk.gray(`No sessions in ${dirName}, showing all`));
     }
 
-    const autoSelectedSession =
-      cwdSessions.length === 1 && !options.source ? cwdSessions[0] : undefined;
+    const autoSelectedSession = cwdSessions.length === 1 && !options.source ? cwdSessions[0] : undefined;
 
     // Step 1: Filter by CLI tool (optional) -- skip if source already specified or auto-selected
     let filteredSessions = hasCwdSessions ? cwdSessions : sessions;
-    let selectedScope: "cwd" | "all" = hasCwdSessions ? "cwd" : "all";
+    let selectedScope: 'cwd' | 'all' = hasCwdSessions ? 'cwd' : 'all';
 
-    if (
-      !autoSelectedSession &&
-      !options.source &&
-      !options.allTools &&
-      sessions.length > 0
-    ) {
+    if (!autoSelectedSession && !options.source && !options.allTools && sessions.length > 0) {
       let scope = selectedScope;
 
       while (true) {
-        const pool = scope === "cwd" ? cwdSessions : sessions;
+        const pool = scope === 'cwd' ? cwdSessions : sessions;
         const bySource = pool.reduce(
           (acc, sess) => {
             acc[sess.source] = (acc[sess.source] || 0) + 1;
@@ -283,17 +241,16 @@ export async function interactivePick(
 
         // Select message conveys scope context
         let message: string;
-        if (scope === "cwd") {
-          message = `${dirName} — ${pool.length} session${pool.length !== 1 ? "s" : ""}`;
+        if (scope === 'cwd') {
+          message = `${dirName} — ${pool.length} session${pool.length !== 1 ? 's' : ''}`;
         } else if (hasCwdSessions) {
           message = `All sessions — ${pool.length} total`;
         } else {
-          message = `${pool.length} sessions across ${toolCount} tool${toolCount !== 1 ? "s" : ""}`;
+          message = `${pool.length} sessions across ${toolCount} tool${toolCount !== 1 ? 's' : ''}`;
         }
 
         // Build options: tool names first, then "All tools", then scope toggle
-        const filterOptions: { value: string; label: string; hint?: string }[] =
-          [];
+        const filterOptions: { value: string; label: string; hint?: string }[] = [];
 
         // Per-tool options (sorted by count desc, colored)
         filterOptions.push(
@@ -307,24 +264,20 @@ export async function interactivePick(
 
         // "All tools" -- no tool filter, shows all sessions in current scope
         filterOptions.push({
-          value: "all-in-scope",
+          value: 'all-in-scope',
           label: `All tools (${pool.length})`,
         });
 
         // Scope toggle (only when CWD sessions exist and --all wasn't used)
         if (hasCwdSessions && !options.all) {
-          if (scope === "cwd") {
+          if (scope === 'cwd') {
             filterOptions.push({
-              value: "scope-toggle",
-              label: chalk.dim(
-                allSessionsLoaded
-                  ? `Show all sessions (${sessions.length})`
-                  : "Show all sessions",
-              ),
+              value: 'scope-toggle',
+              label: chalk.dim(allSessionsLoaded ? `Show all sessions (${sessions.length})` : 'Show all sessions'),
             });
           } else {
             filterOptions.push({
-              value: "scope-toggle",
+              value: 'scope-toggle',
               label: chalk.dim(`This directory (${cwdSessions.length})`),
             });
           }
@@ -333,27 +286,27 @@ export async function interactivePick(
         const toolFilter = await clack.select({
           message,
           options: filterOptions,
-          initialValue: "all-in-scope",
+          initialValue: 'all-in-scope',
         });
 
         if (clack.isCancel(toolFilter)) {
-          clack.cancel("Cancelled");
+          clack.cancel('Cancelled');
           return;
         }
 
         // Scope toggle: flip and re-render
-        if (toolFilter === "scope-toggle") {
-          if (scope === "cwd") {
+        if (toolFilter === 'scope-toggle') {
+          if (scope === 'cwd') {
             await loadAllSessions();
-            scope = "all";
+            scope = 'all';
           } else {
-            scope = "cwd";
+            scope = 'cwd';
           }
           continue;
         }
 
         // "All tools": use entire pool
-        if (toolFilter === "all-in-scope") {
+        if (toolFilter === 'all-in-scope') {
           filteredSessions = pool;
           selectedScope = scope;
           break;
@@ -388,11 +341,8 @@ export async function interactivePick(
       let confirmed: UnifiedSession | undefined;
       while (!confirmed) {
         let candidate: UnifiedSession;
-        if (selectedScope === "all") {
-          const selectedSession = await selectSessionByDirectory(
-            visibleSessions,
-            currentDir,
-          );
+        if (selectedScope === 'all') {
+          const selectedSession = await selectSessionByDirectory(visibleSessions, currentDir);
           if (!selectedSession) return;
           candidate = selectedSession;
         } else {
@@ -407,7 +357,7 @@ export async function interactivePick(
           });
 
           if (clack.isCancel(selectedSession)) {
-            clack.cancel("Cancelled");
+            clack.cancel('Cancelled');
             return;
           }
 
@@ -419,23 +369,23 @@ export async function interactivePick(
           const action = await clack.select({
             message: formatSessionForSelect(candidate),
             options: [
-              { value: "resume", label: "Resume" },
-              { value: "peek", label: "Peek at conversation" },
-              { value: "back", label: "Pick a different session" },
+              { value: 'resume', label: 'Resume' },
+              { value: 'peek', label: 'Peek at conversation' },
+              { value: 'back', label: 'Pick a different session' },
             ],
-            initialValue: "resume",
+            initialValue: 'resume',
           });
 
           if (clack.isCancel(action)) {
-            clack.cancel("Cancelled");
+            clack.cancel('Cancelled');
             return;
           }
 
-          if (action === "peek") {
+          if (action === 'peek') {
             await peekSession(candidate);
             continue;
           }
-          if (action === "resume") confirmed = candidate;
+          if (action === 'resume') confirmed = candidate;
           break;
         }
       }
@@ -453,9 +403,7 @@ export async function interactivePick(
     const launchSession = withLaunchCwd(session, launchCwd);
 
     const forwarding: HandoffForwardingOptions | undefined =
-      targetTool !== session.source
-        ? { tailArgs: options.forwardArgs }
-        : undefined;
+      targetTool !== session.source ? { tailArgs: options.forwardArgs } : undefined;
 
     if (forwarding) {
       const resolved = resolveCrossToolForwarding(targetTool, forwarding);
@@ -465,23 +413,21 @@ export async function interactivePick(
     // Step 4: Show what will happen and resume
     console.log();
     clack.log.info(`Working directory: ${chalk.cyan(launchCwd)}`);
-    clack.log.info(
-      `Command: ${chalk.cyan(getResumeCommand(launchSession, targetTool, forwarding))}`,
-    );
+    clack.log.info(`Command: ${chalk.cyan(getResumeCommand(launchSession, targetTool, forwarding))}`);
     console.log();
 
     clack.log.step(`Handing off to ${targetTool}...`);
     clack.outro(`Launching ${targetTool}`);
 
     process.chdir(launchCwd);
-    await resume(launchSession, targetTool, "inline", forwarding, {
+    await resume(launchSession, targetTool, 'inline', forwarding, {
       preset: options.preset,
       configPath: options.configPath,
       chain: options.chain,
     });
   } catch (error) {
     if (clack.isCancel(error)) {
-      clack.cancel("Cancelled");
+      clack.cancel('Cancelled');
       return;
     }
     clack.log.error(`${(error as Error).message}`);

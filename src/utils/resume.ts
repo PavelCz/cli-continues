@@ -1,25 +1,21 @@
-import { spawn } from "node:child_process";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import type { VerbosityConfig } from "../config/index.js";
-import { getPreset, loadConfig } from "../config/index.js";
-import { ToolNotAvailableError, UnknownSourceError } from "../errors.js";
-import { logger } from "../logger.js";
-import { ALL_TOOLS, adapters } from "../parsers/registry.js";
-import type {
-  SessionContext,
-  SessionSource,
-  UnifiedSession,
-} from "../types/index.js";
+import { spawn } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import type { VerbosityConfig } from '../config/index.js';
+import { getPreset, loadConfig } from '../config/index.js';
+import { ToolNotAvailableError, UnknownSourceError } from '../errors.js';
+import { logger } from '../logger.js';
+import { ALL_TOOLS, adapters } from '../parsers/registry.js';
+import type { SessionContext, SessionSource, UnifiedSession } from '../types/index.js';
 import {
   type ForwardResolution,
   formatForwardArgs,
   type HandoffForwardingOptions,
   resolveTargetForwarding,
-} from "./forward-flags.js";
-import { extractContext, saveContext } from "./index.js";
-import { getSourceLabels, safePath } from "./markdown.js";
-import { IS_WINDOWS, WHICH_CMD } from "./platform.js";
+} from './forward-flags.js';
+import { extractContext, saveContext } from './index.js';
+import { getSourceLabels, safePath } from './markdown.js';
+import { IS_WINDOWS, WHICH_CMD } from './platform.js';
 
 export interface HandoffContextOptions {
   preset?: string;
@@ -28,10 +24,7 @@ export interface HandoffContextOptions {
   debugPrompt?: boolean;
 }
 
-export function resolveLaunchCwd(
-  session: Pick<UnifiedSession, "cwd">,
-  cwdOverride?: string,
-): string {
+export function resolveLaunchCwd(session: Pick<UnifiedSession, 'cwd'>, cwdOverride?: string): string {
   const override = cwdOverride?.trim();
   if (!override) return session.cwd || process.cwd();
 
@@ -48,10 +41,7 @@ export function resolveLaunchCwd(
   return cwd;
 }
 
-export function withLaunchCwd(
-  session: UnifiedSession,
-  cwd: string,
-): UnifiedSession {
+export function withLaunchCwd(session: UnifiedSession, cwd: string): UnifiedSession {
   return session.cwd === cwd ? session : { ...session, cwd };
 }
 
@@ -79,52 +69,46 @@ function hasConfigOverride(args: string[], key: string): boolean {
   for (let index = 0; index < args.length; index += 1) {
     const token = args[index];
 
-    if ((token === "-c" || token === "--config") && index + 1 < args.length) {
+    if ((token === '-c' || token === '--config') && index + 1 < args.length) {
       const value = args[index + 1]?.trim();
       if (value?.startsWith(keyPrefix)) return true;
       index += 1;
       continue;
     }
 
-    if (token.startsWith("-c=")) {
+    if (token.startsWith('-c=')) {
       if (token.slice(3).trim().startsWith(keyPrefix)) return true;
     }
 
-    if (token.startsWith("--config=")) {
-      if (token.slice("--config=".length).trim().startsWith(keyPrefix))
-        return true;
+    if (token.startsWith('--config=')) {
+      if (token.slice('--config='.length).trim().startsWith(keyPrefix)) return true;
     }
   }
 
   return false;
 }
 
-export function getDefaultHandoffInitArgs(
-  target: SessionSource,
-  forwardedArgs: string[] = [],
-): string[] {
-  if (target !== "codex") return [];
+export function getDefaultHandoffInitArgs(target: SessionSource, forwardedArgs: string[] = []): string[] {
+  if (target !== 'codex') return [];
 
   const defaults: string[] = [];
 
-  if (!hasConfigOverride(forwardedArgs, "model_reasoning_effort")) {
-    defaults.push("-c", 'model_reasoning_effort="high"');
+  if (!hasConfigOverride(forwardedArgs, 'model_reasoning_effort')) {
+    defaults.push('-c', 'model_reasoning_effort="high"');
   }
 
-  if (!hasConfigOverride(forwardedArgs, "model_reasoning_summary")) {
-    defaults.push("-c", 'model_reasoning_summary="detailed"');
+  if (!hasConfigOverride(forwardedArgs, 'model_reasoning_summary')) {
+    defaults.push('-c', 'model_reasoning_summary="detailed"');
   }
 
-  if (!hasConfigOverride(forwardedArgs, "model_supports_reasoning_summaries")) {
-    defaults.push("-c", "model_supports_reasoning_summaries=true");
+  if (!hasConfigOverride(forwardedArgs, 'model_supports_reasoning_summaries')) {
+    defaults.push('-c', 'model_supports_reasoning_summaries=true');
   }
 
   return defaults;
 }
 
-function resolveHandoffConfig(
-  options?: HandoffContextOptions,
-): VerbosityConfig {
+function resolveHandoffConfig(options?: HandoffContextOptions): VerbosityConfig {
   const loaded = loadConfig(options?.configPath);
 
   let config = loaded;
@@ -170,27 +154,24 @@ export async function nativeResume(session: UnifiedSession): Promise<void> {
 export async function crossToolResume(
   session: UnifiedSession,
   target: SessionSource,
-  mode: "inline" | "reference" = "inline",
+  mode: 'inline' | 'reference' = 'inline',
   forwarding?: HandoffForwardingOptions,
   contextOptions?: HandoffContextOptions,
 ): Promise<void> {
   const adapter = adapters[target];
   if (!adapter) throw new UnknownSourceError(target);
 
-  const context = await extractContext(
-    session,
-    resolveHandoffConfig(contextOptions),
-  );
+  const context = await extractContext(session, resolveHandoffConfig(contextOptions));
   const cwd = session.cwd || process.cwd();
 
   // Always save handoff file to project directory (for sandboxed tools like Gemini)
-  const localPath = path.join(cwd, ".continues-handoff.md");
+  const localPath = path.join(cwd, '.continues-handoff.md');
   let handoffWritten = false;
   try {
     fs.writeFileSync(localPath, context.markdown);
     handoffWritten = true;
   } catch (err) {
-    logger.debug("resume: failed to write handoff file", localPath, err);
+    logger.debug('resume: failed to write handoff file', localPath, err);
   }
 
   // Also save to global directory as backup
@@ -206,7 +187,7 @@ export async function crossToolResume(
   // Build prompt based on mode
   const prompt = IS_WINDOWS
     ? buildWindowsSafePrompt(session)
-    : mode === "inline"
+    : mode === 'inline'
       ? buildInlinePrompt(context, session)
       : buildReferencePrompt(session);
 
@@ -218,31 +199,18 @@ export async function crossToolResume(
   const binaryName = await requireToolBinaryName(target);
   const resolved = resolveCrossToolForwarding(target, forwarding);
   const defaultInitArgs = getDefaultHandoffInitArgs(target, resolved.extraArgs);
-  await runCommand(
-    binaryName,
-    [
-      ...defaultInitArgs,
-      ...resolved.extraArgs,
-      ...adapter.crossToolArgs(prompt, cwd),
-    ],
-    cwd,
-  );
+  await runCommand(binaryName, [...defaultInitArgs, ...resolved.extraArgs, ...adapter.crossToolArgs(prompt, cwd)], cwd);
 }
 
 /**
  * Build an inline prompt that embeds the full session context directly.
  * The LLM gets everything upfront — no file reading needed.
  */
-function buildInlinePrompt(
-  context: SessionContext,
-  session: UnifiedSession,
-): string {
+function buildInlinePrompt(context: SessionContext, session: UnifiedSession): string {
   const sourceLabel = getSourceLabels()[session.source] || session.source;
 
   // Simple intro — the handoff markdown already has the full table, conversation, and closing directive
-  const sessionFileRef = session.originalPath
-    ? ` (original session: \`${safePath(session.originalPath)}\`)`
-    : "";
+  const sessionFileRef = session.originalPath ? ` (original session: \`${safePath(session.originalPath)}\`)` : '';
   const intro = `I'm continuing a coding session from **${sourceLabel}**${sessionFileRef}. Here's the full context:\n\n---\n\n`;
 
   return intro + context.markdown;
@@ -264,16 +232,14 @@ function buildReferencePrompt(session: UnifiedSession): string {
     `|--------|-------|`,
     `| Previous tool | ${sourceLabel} |`,
     `| Working directory | \`${session.cwd}\` |`,
-    session.originalPath
-      ? `| Original session file | \`${safePath(session.originalPath)}\` |`
-      : "",
+    session.originalPath ? `| Original session file | \`${safePath(session.originalPath)}\` |` : '',
     `| Context file | \`.continues-handoff.md\` |`,
-    session.summary ? `| Last task | ${session.summary.slice(0, 80)} |` : "",
+    session.summary ? `| Last task | ${session.summary.slice(0, 80)} |` : '',
     ``,
     `Read \`.continues-handoff.md\` first, then continue the work.`,
   ]
     .filter(Boolean)
-    .join("\n");
+    .join('\n');
 }
 
 /**
@@ -297,7 +263,7 @@ export function buildWindowsSafePrompt(session: UnifiedSession): string {
 export async function resume(
   session: UnifiedSession,
   target?: SessionSource,
-  mode: "inline" | "reference" = "inline",
+  mode: 'inline' | 'reference' = 'inline',
   forwarding?: HandoffForwardingOptions,
   contextOptions?: HandoffContextOptions,
 ): Promise<void> {
@@ -305,7 +271,7 @@ export async function resume(
 
   if (contextOptions?.debugPrompt && actualTarget === session.source) {
     throw new Error(
-      "--debug-prompt requires a cross-tool handoff target. Use --in <tool> different from the source session.",
+      '--debug-prompt requires a cross-tool handoff target. Use --in <tool> different from the source session.',
     );
   }
 
@@ -314,35 +280,22 @@ export async function resume(
     await nativeResume(session);
   } else {
     // Different tool - use cross-tool injection
-    await crossToolResume(
-      session,
-      actualTarget,
-      mode,
-      forwarding,
-      contextOptions,
-    );
+    await crossToolResume(session, actualTarget, mode, forwarding, contextOptions);
   }
 }
 
 /**
  * Run a command with proper TTY handling
  */
-function runCommand(
-  command: string,
-  args: string[],
-  cwd: string,
-  stdinData?: string,
-): Promise<void> {
+function runCommand(command: string, args: string[], cwd: string, stdinData?: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const stdio: import("node:child_process").StdioOptions = stdinData
-      ? ["pipe", "inherit", "inherit"]
-      : "inherit";
+    const stdio: import('node:child_process').StdioOptions = stdinData ? ['pipe', 'inherit', 'inherit'] : 'inherit';
 
     // On Windows, invoke cmd.exe explicitly to handle .cmd/.bat shims.
     // Args stay in the array — no shell:true (avoids DEP0190), no string
     // concatenation (avoids command-injection risk).
     const child = IS_WINDOWS
-      ? spawn(process.env.ComSpec ?? "cmd.exe", ["/c", command, ...args], {
+      ? spawn(process.env.ComSpec ?? 'cmd.exe', ['/c', command, ...args], {
           cwd,
           stdio,
         })
@@ -353,7 +306,7 @@ function runCommand(
       child.stdin.end();
     }
 
-    child.on("close", (code) => {
+    child.on('close', (code) => {
       if (code === 0) {
         resolve();
       } else {
@@ -361,7 +314,7 @@ function runCommand(
       }
     });
 
-    child.on("error", (err) => {
+    child.on('error', (err) => {
       reject(err);
     });
   });
@@ -372,9 +325,9 @@ function runCommand(
  */
 async function isBinaryAvailable(binaryName: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const child = spawn(WHICH_CMD, [binaryName], { stdio: "ignore" });
-    child.on("close", (code) => resolve(code === 0));
-    child.on("error", () => resolve(false));
+    const child = spawn(WHICH_CMD, [binaryName], { stdio: 'ignore' });
+    child.on('close', (code) => resolve(code === 0));
+    child.on('error', () => resolve(false));
   });
 }
 
@@ -409,8 +362,7 @@ export async function getAvailableTools(): Promise<SessionSource[]> {
 
   return checks
     .filter(
-      (r): r is PromiseFulfilledResult<{ name: SessionSource; ok: boolean }> =>
-        r.status === "fulfilled" && r.value.ok,
+      (r): r is PromiseFulfilledResult<{ name: SessionSource; ok: boolean }> => r.status === 'fulfilled' && r.value.ok,
     )
     .map((r) => r.value.name);
 }
@@ -432,12 +384,8 @@ export function getResumeCommand(
   }
 
   const resolved = resolveCrossToolForwarding(actualTarget, forwarding);
-  const defaultInitArgs = getDefaultHandoffInitArgs(
-    actualTarget,
-    resolved.extraArgs,
-  );
+  const defaultInitArgs = getDefaultHandoffInitArgs(actualTarget, resolved.extraArgs);
   const suffixArgs = [...defaultInitArgs, ...resolved.extraArgs];
-  const suffix =
-    suffixArgs.length > 0 ? ` ${formatForwardArgs(suffixArgs)}` : "";
+  const suffix = suffixArgs.length > 0 ? ` ${formatForwardArgs(suffixArgs)}` : '';
   return `continues resume ${session.id} --in ${actualTarget}${suffix}`;
 }
