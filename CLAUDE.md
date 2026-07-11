@@ -14,7 +14,7 @@ pnpm run build            # TypeScript compile (tsc) → dist/
 pnpm run dev              # Run with tsx (no build step)
 pnpm test                 # Run unit tests (vitest)
 pnpm run test:watch       # Watch mode
-pnpm run link             # Build + pnpm link --global (local testing as `continues` / `cont`)
+pnpm run link             # Build + npm link (local testing as `continues` / `cont`; works with pnpm 11)
 ```
 
 Run a single test file:
