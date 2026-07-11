@@ -18,6 +18,7 @@ import {
   resume,
   withLaunchCwd,
 } from "../utils/resume.js";
+import { peekSession } from "../utils/peek.js";
 import { matchesCwd } from "../utils/slug.js";
 import { selectTargetTool, showForwardingWarnings } from "./_shared.js";
 
@@ -383,30 +384,62 @@ export async function interactivePick(
       console.log(chalk.gray(`  Auto-selected the only matching session:`));
       console.log(`  ${formatSessionForSelect(session)}`);
       console.log();
-    } else if (selectedScope === "all") {
-      const selectedSession = await selectSessionByDirectory(
-        visibleSessions,
-        currentDir,
-      );
-      if (!selectedSession) return;
-      session = selectedSession;
     } else {
-      const selectedSession = await clack.select({
-        message: `Select a session (${filteredSessions.length} available)`,
-        options: visibleSessions.map((sess) => ({
-          value: sess,
-          label: formatSessionForSelect(sess),
-          hint: sess.id.slice(0, 8),
-        })),
-        maxItems: 15,
-      });
+      let confirmed: UnifiedSession | undefined;
+      while (!confirmed) {
+        let candidate: UnifiedSession;
+        if (selectedScope === "all") {
+          const selectedSession = await selectSessionByDirectory(
+            visibleSessions,
+            currentDir,
+          );
+          if (!selectedSession) return;
+          candidate = selectedSession;
+        } else {
+          const selectedSession = await clack.select({
+            message: `Select a session (${filteredSessions.length} available)`,
+            options: visibleSessions.map((sess) => ({
+              value: sess,
+              label: formatSessionForSelect(sess),
+              hint: sess.id.slice(0, 8),
+            })),
+            maxItems: 15,
+          });
 
-      if (clack.isCancel(selectedSession)) {
-        clack.cancel("Cancelled");
-        return;
+          if (clack.isCancel(selectedSession)) {
+            clack.cancel("Cancelled");
+            return;
+          }
+
+          candidate = selectedSession as UnifiedSession;
+        }
+
+        // Action menu: resume, peek at the conversation, or reselect
+        while (true) {
+          const action = await clack.select({
+            message: formatSessionForSelect(candidate),
+            options: [
+              { value: "resume", label: "Resume" },
+              { value: "peek", label: "Peek at conversation" },
+              { value: "back", label: "Pick a different session" },
+            ],
+            initialValue: "resume",
+          });
+
+          if (clack.isCancel(action)) {
+            clack.cancel("Cancelled");
+            return;
+          }
+
+          if (action === "peek") {
+            await peekSession(candidate);
+            continue;
+          }
+          if (action === "resume") confirmed = candidate;
+          break;
+        }
       }
-
-      session = selectedSession as UnifiedSession;
+      session = confirmed;
     }
 
     // Step 3: Select target tool
