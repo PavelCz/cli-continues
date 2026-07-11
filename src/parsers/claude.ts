@@ -76,6 +76,13 @@ export function relocateClaudeSessionForCwd(session: UnifiedSession): void {
     fs.copyFileSync(original, targetPath);
     fs.unlinkSync(original);
   }
+  // Invalidate the cached index so the next run rescans instead of waiting
+  // out the TTL. Paths mirror utils/index.ts (importing it here would create
+  // a parser <-> index cycle).
+  const continuesDir = path.join(homeDir(), ".continues");
+  fs.rmSync(path.join(continuesDir, "sessions.jsonl"), { force: true });
+  fs.rmSync(path.join(continuesDir, "sessions.claude.jsonl"), { force: true });
+
   console.log(
     `Moved Claude session file to ${targetDir} (backup: ${backupDir})`,
   );
@@ -129,7 +136,8 @@ async function parseSessionInfo(filePath: string): Promise<{
     if (typeof parsed !== "object" || parsed === null) return "continue";
     const msg = parsed as ClaudeMessage;
     if (msg.sessionId && !sessionId) sessionId = msg.sessionId;
-    if (msg.cwd && !cwd) cwd = msg.cwd;
+    // Latest cwd wins: resumed sessions can move directories (see issue #2/#5)
+    if (msg.cwd) cwd = msg.cwd;
     if (msg.gitBranch && !gitBranch) gitBranch = msg.gitBranch;
     const raw = msg as Record<string, unknown>;
     if (msg.type === "custom-title" && typeof raw.customTitle === "string") {
@@ -702,9 +710,7 @@ function isTerminationMessage(text: string): boolean {
  * Skips short termination/rate-limit messages to find the real output.
  * Returns null text if the file doesn't exist, is empty, or has no substantial result.
  */
-async function extractSubagentResult(
-  filePath: string,
-): Promise<{
+async function extractSubagentResult(filePath: string): Promise<{
   text: string | null;
   status: "completed" | "killed";
   toolCallCount: number;

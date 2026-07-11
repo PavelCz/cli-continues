@@ -133,6 +133,31 @@ describe("claude parser hardening", () => {
     expect(sessions.map((session) => session.id)).toContain(id);
   });
 
+  it("uses the latest cwd when a session moved directories", async () => {
+    const configDir = makeConfigDir();
+    const id = "66666666-6666-4666-8666-666666666666";
+    const projectDir = path.join(configDir, "projects", "-tmp-old-project");
+    writeJsonl(path.join(projectDir, `${id}.jsonl`), [
+      ...makeRows({
+        id,
+        first: "2026-04-15T10:00:00.000Z",
+        last: "2026-04-15T10:05:00.000Z",
+        cwd: "/tmp/old-project",
+      }),
+      ...makeRows({
+        id,
+        first: "2026-04-15T11:00:00.000Z",
+        last: "2026-04-15T11:05:00.000Z",
+        cwd: "/tmp/new-project",
+      }),
+    ]);
+
+    const { parseClaudeSessions } = await loadClaudeParser(configDir);
+    const [session] = await parseClaudeSessions({ lightweight: true });
+
+    expect(session.cwd).toBe("/tmp/new-project");
+  });
+
   it("orders sessions by transcript timestamps instead of filesystem mtime", async () => {
     const configDir = makeConfigDir();
     const projectDir = path.join(configDir, "projects", "-tmp-claude-project");

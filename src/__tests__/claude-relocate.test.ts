@@ -81,6 +81,34 @@ describe("relocateClaudeSessionForCwd", () => {
     expect(fs.readFileSync(backupPath, "utf8")).toBe('{"type":"user"}\n');
   });
 
+  it("invalidates the cached session index after a move", async () => {
+    const configDir = makeTmpDir("claude-relocate-");
+    testState.home = makeTmpDir("claude-relocate-home-");
+    const { relocateClaudeSessionForCwd } = await loadClaudeParser(configDir);
+
+    const continuesDir = path.join(testState.home, ".continues");
+    fs.mkdirSync(continuesDir, { recursive: true });
+    fs.writeFileSync(path.join(continuesDir, "sessions.jsonl"), "stale\n");
+    fs.writeFileSync(
+      path.join(continuesDir, "sessions.claude.jsonl"),
+      "stale\n",
+    );
+
+    const originalDir = path.join(configDir, "projects", "-old-project");
+    const originalPath = path.join(originalDir, "sid-1234.jsonl");
+    fs.mkdirSync(originalDir, { recursive: true });
+    fs.writeFileSync(originalPath, '{"type":"user"}\n');
+
+    relocateClaudeSessionForCwd(makeSession("/new/launch_dir", originalPath));
+
+    expect(fs.existsSync(path.join(continuesDir, "sessions.jsonl"))).toBe(
+      false,
+    );
+    expect(
+      fs.existsSync(path.join(continuesDir, "sessions.claude.jsonl")),
+    ).toBe(false);
+  });
+
   it("does nothing when the session file is already in the launch cwd slug folder", async () => {
     const configDir = makeTmpDir("claude-relocate-");
     testState.home = makeTmpDir("claude-relocate-home-");
