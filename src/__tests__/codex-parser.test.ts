@@ -64,6 +64,46 @@ describe('codex parser hardening', () => {
     expect(session.summary).toBe('First user message');
   });
 
+  it('uses the latest turn-context cwd after a session resumes in another directory', async () => {
+    const home = makeCodexHome();
+    const id = 'moved-session-id';
+    const originalCwd = '/tmp/original-project';
+    const movedCwd = '/tmp/moved-project';
+
+    writeRollout(home, path.join('sessions', '2026', '04', '15'), `rollout-2026-04-15T10-00-00-${id}.jsonl`, [
+      {
+        timestamp: '2026-04-15T10:00:00.000Z',
+        type: 'session_meta',
+        payload: { id, cwd: originalCwd },
+      },
+      {
+        timestamp: '2026-04-15T10:00:01.000Z',
+        type: 'event_msg',
+        payload: { type: 'user_message', message: 'First user message' },
+      },
+      {
+        timestamp: '2026-04-15T10:05:00.000Z',
+        type: 'turn_context',
+        payload: { cwd: originalCwd },
+      },
+      {
+        timestamp: '2026-04-15T11:00:00.000Z',
+        type: 'session_meta',
+        payload: { id, cwd: originalCwd },
+      },
+      {
+        timestamp: '2026-04-15T11:00:01.000Z',
+        type: 'turn_context',
+        payload: { cwd: movedCwd },
+      },
+    ]);
+
+    const { parseCodexSessions } = await loadCodexParser(home);
+    const [session] = await parseCodexSessions({ cwd: movedCwd, lightweight: true });
+
+    expect(session.cwd).toBe(movedCwd);
+  });
+
   it('discovers sessions from both active and archived session trees', async () => {
     const home = makeCodexHome();
 
