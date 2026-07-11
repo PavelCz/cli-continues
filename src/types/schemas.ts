@@ -152,6 +152,7 @@ export const CodexTurnContextSchema = z
     payload: z
       .object({
         model: z.string().optional(),
+        cwd: z.string().optional(),
       })
       .passthrough()
       .optional(),

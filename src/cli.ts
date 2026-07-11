@@ -93,6 +93,7 @@ program
     `
 Quick start:
   $ continues
+  $ continues --all
   $ npx continues --preset full
   $ continues claude 1
 
@@ -101,6 +102,7 @@ Core workflows:
   $ continues list --source claude --limit 25
   $ continues list --jsonl | jq '.source'
   $ continues resume abc123
+  $ continues resume abc123 --cwd ../other-checkout
   $ continues resume abc123 --in gemini
   $ continues scan --rebuild
 
@@ -117,7 +119,8 @@ Preset guide:
   full     -> maximum detail for handoff, debugging, and audits
 
 Power tips:
-  - Use --all to bypass current-directory filtering in pick mode
+  - Use --all to open every discovered session across all tools
+  - Use --cwd <dir> to launch a resumed session from a different directory
   - Forward raw args to target tools after -- (example: continues claude 1 -- --help)
   - Combine --config .continues.yml with --preset for project defaults + per-run overrides
 
@@ -129,11 +132,12 @@ Aliases:
   );
 
 // Default command - Interactive TUI
-program.option('-a, --all', 'Show all sessions globally (skip directory filtering)').action(async (options) => {
+program.option('-a, --all', 'Open all sessions across all tools').action(async (options) => {
   const globalOptions = program.opts();
   await interactivePick(
     {
       all: options.all,
+      allTools: options.all,
       forwardArgs: tailArgs,
       preset: globalOptions.preset as string | undefined,
       configPath: globalOptions.config as string | undefined,
@@ -190,6 +194,7 @@ program
   .option('-i, --in <cli-tool>', `Target CLI tool (${ALL_TOOLS.join(', ')})`)
   .option('--reference', 'Use file reference instead of inline context (for very large sessions)')
   .option('--debug-prompt', 'Print the exact handoff prompt instead of launching the target tool')
+  .option('--cwd <dir>', 'Launch the resumed session from this working directory')
   .option('--no-tui', 'Disable interactive prompts')
   .allowUnknownOption(true)
   .allowExcessArguments(true)
@@ -268,8 +273,9 @@ for (const tool of ALL_TOOLS) {
   program
     .command(`${tool} [n]`)
     .description(`Resume Nth newest ${adapter.label} session (default: 1)`)
-    .action(async (n = '1') => {
-      await resumeBySource(tool, parseInt(n, 10));
+    .option('--cwd <dir>', 'Launch the resumed session from this working directory')
+    .action(async (n = '1', options: { cwd?: string }) => {
+      await resumeBySource(tool, parseInt(n, 10), { cwd: options.cwd });
     });
 }
 

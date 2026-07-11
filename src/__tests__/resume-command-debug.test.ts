@@ -1,3 +1,6 @@
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { UnifiedSession } from '../types/index.js';
 
@@ -85,10 +88,41 @@ describe('resumeCommand debug prompt option', () => {
     expect(resumeMock).toHaveBeenCalledTimes(1);
     expect(resumeMock.mock.calls[0]?.[4]).toMatchObject({ debugPrompt: true });
 
-    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    const output = logSpy.mock.calls.map((call) => call.join(' ')).join('\\n');
     expect(output).not.toContain('Session:');
     expect(output).not.toContain('Command:');
     expect(chdirSpy).toHaveBeenCalledWith('/tmp/project');
+  });
+
+  it('uses an explicit cwd override when launching a resumed session', async () => {
+    const launchCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'continues-resume-cwd-'));
+    try {
+      findSessionMock.mockResolvedValue(makeSession());
+
+      await resumeCommand('resume-debug-test', { noTui: true, cwd: launchCwd } as never, {
+        isTTY: false,
+      });
+
+      expect(resumeMock).toHaveBeenCalledTimes(1);
+      expect(resumeMock.mock.calls[0]?.[0]).toMatchObject({ cwd: launchCwd });
+      expect(chdirSpy).toHaveBeenCalledWith(launchCwd);
+    } finally {
+      fs.rmSync(launchCwd, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a missing explicit cwd override before resuming', async () => {
+    const missingCwd = path.join(os.tmpdir(), `continues-missing-${Date.now()}`);
+    findSessionMock.mockResolvedValue(makeSession());
+
+    await resumeCommand('resume-debug-test', { noTui: true, cwd: missingCwd } as never, {
+      isTTY: false,
+    });
+
+    expect(process.exitCode).toBe(1);
+    expect(resumeMock).not.toHaveBeenCalled();
+    expect(chdirSpy).not.toHaveBeenCalledWith(missingCwd);
+    expect(errorSpy.mock.calls.map((call) => call.join(' ')).join('\\n')).toContain('Working directory not found');
   });
 
   it('rejects invalid --in targets before resolving forwarding or resuming', async () => {
@@ -103,6 +137,6 @@ describe('resumeCommand debug prompt option', () => {
     expect(getResumeCommandMock).not.toHaveBeenCalled();
     expect(resumeMock).not.toHaveBeenCalled();
     expect(chdirSpy).not.toHaveBeenCalledWith('/tmp/project');
-    expect(errorSpy.mock.calls.map((call) => call.join(' ')).join('\n')).toContain('Unknown target tool: not-a-tool');
+    expect(errorSpy.mock.calls.map((call) => call.join(' ')).join('\\n')).toContain('Unknown target tool: not-a-tool');
   });
 });

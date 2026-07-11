@@ -1,4 +1,4 @@
-import * as fs from 'fs';
+import * as fs from 'node:fs';
 import { IS_WINDOWS } from './platform.js';
 
 /**
@@ -6,7 +6,7 @@ import { IS_WINDOWS } from './platform.js';
  * Slugs replace `/` and `.` with `-` in the directory name, e.g.:
  *   "Users-evolution-Sites-localhost-dzcm-test" → "/Users/evolution/Sites/localhost/dzcm.test"
  *
- * At each dash, tries: path separator `/`, dot `.`, or literal `-`.
+ * At each dash, tries: path separator `/`, dot `.`, literal `-`, or `_`.
  * Validates candidates with fs.existsSync(). Falls back to naive slash replacement.
  */
 export function cwdFromSlug(slug: string): string {
@@ -55,6 +55,10 @@ export function cwdFromSlug(slug: string): string {
 
       // Option 3: keep as literal dash (e.g. laravel-contentai)
       resolve(idx + 1, [...rest, last + '-' + part]);
+      if (best) return;
+
+      // Option 4: treat dash as underscore (e.g. continuous-lam -> continuous_lam)
+      resolve(idx + 1, [...rest, last + '_' + part]);
     }
   }
 

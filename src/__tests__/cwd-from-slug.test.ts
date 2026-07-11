@@ -1,6 +1,6 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { cwdFromSlug } from '../utils/slug.js';
 
@@ -32,5 +32,22 @@ describe('cwdFromSlug', () => {
 
   it('keeps Unix fallback behavior for non-drive slugs', () => {
     expect(cwdFromSlug('Users-alice-my-project')).toBe('/Users/alice/my/project');
+  });
+
+  it('resolves existing Unix paths that contain literal dashes and underscores', () => {
+    if (process.platform === 'win32') return;
+
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'continues-slug-'));
+    try {
+      const target = path.join(base, 'linux-data', 'code', 'clam', 'continuous_lam');
+      fs.mkdirSync(target, { recursive: true });
+
+      const normalized = target.replace(/\\/g, '/');
+      const slug = normalized.replace(/^\//, '').replace(/[/.]/g, '-');
+
+      expect(cwdFromSlug(slug)).toBe(normalized);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
   });
 });

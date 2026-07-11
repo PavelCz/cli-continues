@@ -24,6 +24,27 @@ export interface HandoffContextOptions {
   debugPrompt?: boolean;
 }
 
+export function resolveLaunchCwd(session: Pick<UnifiedSession, 'cwd'>, cwdOverride?: string): string {
+  const override = cwdOverride?.trim();
+  if (!override) return session.cwd || process.cwd();
+
+  const cwd = path.resolve(override);
+
+  if (!fs.existsSync(cwd)) {
+    throw new Error(`Working directory not found: ${cwd}`);
+  }
+
+  if (!fs.statSync(cwd).isDirectory()) {
+    throw new Error(`Working directory is not a directory: ${cwd}`);
+  }
+
+  return cwd;
+}
+
+export function withLaunchCwd(session: UnifiedSession, cwd: string): UnifiedSession {
+  return session.cwd === cwd ? session : { ...session, cwd };
+}
+
 export function getToolBinaryCandidates(tool: SessionSource): string[] {
   const adapter = adapters[tool];
   if (!adapter) return [];

@@ -15,7 +15,7 @@ import type {
 import type { ClaudeMessage } from '../types/schemas.js';
 import { extractTextFromBlocks, isRealUserMessage } from '../utils/content.js';
 import { findFiles, mapConcurrent } from '../utils/fs-helpers.js';
-import { getFileStats, readJsonlFile, scanJsonlFile, scanJsonlHead } from '../utils/jsonl.js';
+import { getFileStats, readJsonlFile, scanJsonlFile } from '../utils/jsonl.js';
 import { generateHandoffMarkdown, safePath } from '../utils/markdown.js';
 import { cleanSummary, extractRepoFromCwd, homeDir, trimMessages } from '../utils/parser-helpers.js';
 import { matchesCwd } from '../utils/slug.js';
@@ -56,13 +56,11 @@ async function findSessionFiles(options: SessionParseOptions = {}): Promise<stri
 /**
  * Parse session metadata and first user message
  */
-async function parseSessionInfo(
-  filePath: string,
-  options: SessionParseOptions = {},
-): Promise<{
+async function parseSessionInfo(filePath: string): Promise<{
   sessionId: string;
   cwd: string;
   gitBranch?: string;
+  sessionName: string;
   firstUserMessage: string;
   firstTimestamp?: string;
   lastTimestamp?: string;
@@ -70,6 +68,7 @@ async function parseSessionInfo(
   let sessionId = '';
   let cwd = '';
   let gitBranch = '';
+  let sessionName = '';
   let firstUserMessage = '';
   let firstTimestamp = '';
   let lastTimestamp = '';
@@ -82,6 +81,10 @@ async function parseSessionInfo(
     if (msg.sessionId && !sessionId) sessionId = msg.sessionId;
     if (msg.cwd && !cwd) cwd = msg.cwd;
     if (msg.gitBranch && !gitBranch) gitBranch = msg.gitBranch;
+    const raw = msg as Record<string, unknown>;
+    if (msg.type === 'custom-title' && typeof raw.customTitle === 'string') {
+      sessionName = cleanSummary(raw.customTitle, 200);
+    }
     const timestamp = getClaudeMessageTimestamp(msg);
     if (timestamp) {
       const timeMs = Date.parse(timestamp);
@@ -103,21 +106,16 @@ async function parseSessionInfo(
         firstUserMessage = content;
       }
     }
-    if (options.lightweight && sessionId && cwd && firstUserMessage) return 'stop';
     return 'continue';
   };
 
-  if (options.lightweight) {
-    await scanJsonlHead(filePath, 50, visitor);
-  } else {
-    await scanJsonlFile(filePath, visitor);
-  }
+  await scanJsonlFile(filePath, visitor);
 
   if (!sessionId) {
     sessionId = path.basename(filePath, '.jsonl');
   }
 
-  return { sessionId, cwd, gitBranch, firstUserMessage, firstTimestamp, lastTimestamp };
+  return { sessionId, cwd, gitBranch, sessionName, firstUserMessage, firstTimestamp, lastTimestamp };
 }
 
 /**
@@ -127,7 +125,7 @@ export async function parseClaudeSessions(options: SessionParseOptions = {}): Pr
   const files = await findSessionFiles(options);
   const parsedSessions = await mapConcurrent(files, 16, async (filePath): Promise<UnifiedSession | null> => {
     try {
-      const info = await parseSessionInfo(filePath, options);
+      const info = await parseSessionInfo(filePath);
       if (options.cwd && info.cwd && !matchesCwd(info.cwd, options.cwd)) return null;
 
       const fileStats = fs.statSync(filePath);
@@ -142,6 +140,7 @@ export async function parseClaudeSessions(options: SessionParseOptions = {}): Pr
         cwd: info.cwd,
         repo,
         branch: info.gitBranch,
+        name: info.sessionName || undefined,
         lines: stats.lines,
         bytes: stats.bytes,
         createdAt: !options.lightweight && info.firstTimestamp ? new Date(info.firstTimestamp) : fileStats.birthtime,

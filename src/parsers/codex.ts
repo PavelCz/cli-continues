@@ -15,7 +15,7 @@ import type {
 import type { CodexMessage, CodexSessionMeta } from '../types/schemas.js';
 import { countDiffStats, extractStdoutTail } from '../utils/diff.js';
 import { findFiles, mapConcurrent } from '../utils/fs-helpers.js';
-import { getFileStats, readJsonlFile, scanJsonlFile, scanJsonlHead } from '../utils/jsonl.js';
+import { getFileStats, readJsonlFile, scanJsonlFile } from '../utils/jsonl.js';
 import { generateHandoffMarkdown } from '../utils/markdown.js';
 import { cleanSummary, extractRepo, homeDir } from '../utils/parser-helpers.js';
 import { matchesCwd } from '../utils/slug.js';
@@ -33,6 +33,7 @@ import {
 const CODEX_HOME_DIR = process.env.CODEX_HOME || path.join(homeDir(), '.codex');
 const CODEX_SESSIONS_DIR = path.join(CODEX_HOME_DIR, 'sessions');
 const CODEX_ARCHIVED_SESSIONS_DIR = path.join(CODEX_HOME_DIR, 'archived_sessions');
+const CODEX_SESSION_INDEX_FILE = path.join(CODEX_HOME_DIR, 'session_index.jsonl');
 
 const MAX_EXACT_LINE_COUNT_BYTES = 1024 * 1024;
 const MAX_METADATA_SCAN_BYTES = 1024 * 1024;
@@ -48,46 +49,58 @@ async function findSessionFiles(): Promise<string[]> {
   );
 }
 
+async function loadSessionNames(): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  await scanJsonlFile(CODEX_SESSION_INDEX_FILE, (parsed) => {
+    if (!parsed || typeof parsed !== 'object') return 'continue';
+    const record = parsed as Record<string, unknown>;
+    if (typeof record.id !== 'string' || typeof record.thread_name !== 'string') return 'continue';
+    const name = cleanSummary(record.thread_name, 200);
+    if (name) names.set(record.id, name);
+    return 'continue';
+  });
+  return names;
+}
+
 /**
  * Parse session metadata and first user message
  */
 async function parseSessionInfo(filePath: string): Promise<{
   meta: CodexSessionMeta | null;
   firstUserMessage: string;
+  latestCwd: string;
 }> {
   let meta: CodexSessionMeta | null = null;
   let firstUserMessage = '';
+  let latestCwd = '';
 
-  await scanJsonlHead(
-    filePath,
-    150,
-    (parsed) => {
-      const msg = parsed as Record<string, unknown>;
+  await scanJsonlFile(filePath, (parsed) => {
+    const msg = parsed as Record<string, unknown>;
 
-      if (msg.type === 'session_meta' && !meta) {
-        meta = msg as unknown as CodexSessionMeta;
+    if (msg.type === 'session_meta' && !meta) {
+      meta = msg as unknown as CodexSessionMeta;
+    }
+
+    if (!firstUserMessage && msg.type === 'event_msg') {
+      const payload = msg.payload as Record<string, unknown> | undefined;
+      if (payload?.type === 'user_message') {
+        firstUserMessage = (payload.message as string) || '';
       }
+    }
 
-      if (!firstUserMessage && msg.type === 'event_msg') {
-        const payload = msg.payload as Record<string, unknown> | undefined;
-        if (payload?.type === 'user_message') {
-          firstUserMessage = (payload.message as string) || '';
-        }
-      }
+    if (!firstUserMessage && msg.type === 'message' && (msg as Record<string, unknown>).role === 'user') {
+      firstUserMessage = typeof msg.content === 'string' ? (msg.content as string) : '';
+    }
 
-      if (!firstUserMessage && msg.type === 'message' && (msg as Record<string, unknown>).role === 'user') {
-        firstUserMessage = typeof msg.content === 'string' ? (msg.content as string) : '';
-      }
+    if (msg.type === 'turn_context') {
+      const payload = msg.payload as Record<string, unknown> | undefined;
+      if (typeof payload?.cwd === 'string' && payload.cwd) latestCwd = payload.cwd;
+    }
 
-      if (meta && firstUserMessage) {
-        return 'stop';
-      }
-      return 'continue';
-    },
-    { maxBytes: MAX_METADATA_SCAN_BYTES },
-  );
+    return 'continue';
+  });
 
-  return { meta, firstUserMessage };
+  return { meta, firstUserMessage, latestCwd };
 }
 
 /**
@@ -109,13 +122,14 @@ function parseFilename(filename: string): { timestamp: Date; id: string } | null
  */
 export async function parseCodexSessions(options: SessionParseOptions = {}): Promise<UnifiedSession[]> {
   const files = await findSessionFiles();
+  const sessionNames = await loadSessionNames();
   const parsedSessions = await mapConcurrent(files, 16, async (filePath): Promise<UnifiedSession | null> => {
     try {
       const filename = path.basename(filePath);
       const parsed = parseFilename(filename);
       if (!parsed) return null;
 
-      const { meta, firstUserMessage } = await parseSessionInfo(filePath);
+      const { meta, firstUserMessage, latestCwd } = await parseSessionInfo(filePath);
       const fileStats = fs.statSync(filePath);
       const stats =
         options.lightweight || fileStats.size > MAX_EXACT_LINE_COUNT_BYTES
@@ -123,7 +137,7 @@ export async function parseCodexSessions(options: SessionParseOptions = {}): Pro
           : await getFileStats(filePath);
 
       const payloadRecord = meta?.payload as Record<string, unknown> | undefined;
-      const cwd = meta?.payload?.cwd || '';
+      const cwd = latestCwd || meta?.payload?.cwd || '';
       if (options.cwd && cwd && !matchesCwd(cwd, options.cwd)) return null;
 
       const gitUrl = meta?.payload?.git?.repository_url;
@@ -144,6 +158,7 @@ export async function parseCodexSessions(options: SessionParseOptions = {}): Pro
         repo,
         branch,
         gitSha,
+        name: sessionNames.get(parsed.id),
         lines: stats.lines,
         bytes: stats.bytes,
         createdAt:

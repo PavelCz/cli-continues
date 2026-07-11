@@ -44,7 +44,7 @@ export function formatSessionForSelect(session: UnifiedSession): string {
   const source = colorFn(tag.padEnd(10));
   const date = session.updatedAt.toISOString().slice(0, 16).replace('T', ' ');
   const repoDisplay = session.repo || session.cwd.split('/').slice(-1)[0] || '';
-  const summary = (session.summary || '(no summary)').slice(0, 48);
+  const summary = (session.name || session.summary || '(no summary)').slice(0, 48);
 
   return `${source}  ${date}  ${chalk.cyan(repoDisplay.padEnd(20))}  ${summary}`;
 }

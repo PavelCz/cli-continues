@@ -54,25 +54,6 @@ export async function selectTargetTool(
   return targetTool;
 }
 
-/**
- * Check if only the native tool is available and auto-resume if so.
- * Returns true if it handled the auto-resume (caller should return).
- */
-export async function checkSingleToolAutoResume(
-  session: UnifiedSession,
-  nativeResumeFn: (s: UnifiedSession) => Promise<void>,
-): Promise<boolean> {
-  const availableTools = await getAvailableTools();
-  if (availableTools.length === 1 && availableTools[0] === session.source) {
-    clack.log.step(`Resuming natively in ${sourceColors[session.source](session.source)}...`);
-    clack.outro(`Launching ${session.source}`);
-    if (session.cwd) process.chdir(session.cwd);
-    await nativeResumeFn(session);
-    return true;
-  }
-  return false;
-}
-
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -5,7 +5,13 @@ import { formatSessionColored } from '../display/format.js';
 import { isSessionSource, type SessionSource, TOOL_NAMES } from '../types/index.js';
 import type { HandoffForwardingOptions } from '../utils/forward-flags.js';
 import { findSession, formatSession, getAllSessions } from '../utils/index.js';
-import { getResumeCommand, resolveCrossToolForwarding, resume } from '../utils/resume.js';
+import {
+  getResumeCommand,
+  resolveCrossToolForwarding,
+  resolveLaunchCwd,
+  resume,
+  withLaunchCwd,
+} from '../utils/resume.js';
 import { selectTargetTool, showForwardingWarnings } from './_shared.js';
 
 /**
@@ -21,6 +27,7 @@ export async function resumeCommand(
     configPath?: string;
     chain?: boolean;
     debugPrompt?: boolean;
+    cwd?: string;
   },
   context: { isTTY: boolean },
   forwarding?: HandoffForwardingOptions,
@@ -83,6 +90,15 @@ export async function resumeCommand(
       return forwarding;
     };
 
+    const launchCwd = resolveLaunchCwd(session, options.cwd);
+    const launchSession = withLaunchCwd(session, launchCwd);
+
+    const logCwdOverride = (): void => {
+      if (!options.cwd || options.debugPrompt) return;
+      console.log(chalk.gray('Working directory: ') + chalk.cyan(launchCwd));
+      console.log();
+    };
+
     // In non-interactive mode, just resume directly
     if (!context.isTTY || options.noTui) {
       const effectiveForwarding = forwardingFor(target);
@@ -93,12 +109,13 @@ export async function resumeCommand(
 
       if (!options.debugPrompt) {
         console.log(chalk.gray('Session: ') + formatSession(session));
-        console.log(chalk.gray('Command: ') + chalk.cyan(getResumeCommand(session, target, effectiveForwarding)));
+        console.log(chalk.gray('Command: ') + chalk.cyan(getResumeCommand(launchSession, target, effectiveForwarding)));
         console.log();
+        logCwdOverride();
       }
 
-      if (session.cwd) process.chdir(session.cwd);
-      await resume(session, target, mode, effectiveForwarding, contextOptions);
+      process.chdir(launchCwd);
+      await resume(launchSession, target, mode, effectiveForwarding, contextOptions);
       return;
     }
 
@@ -123,8 +140,8 @@ export async function resumeCommand(
         clack.outro(`Launching ${selectedTarget}`);
       }
 
-      if (session.cwd) process.chdir(session.cwd);
-      await resume(session, selectedTarget, mode, effectiveForwarding, contextOptions);
+      process.chdir(launchCwd);
+      await resume(launchSession, selectedTarget, mode, effectiveForwarding, contextOptions);
     } else {
       // Target specified, just resume
       const effectiveForwarding = forwardingFor(target);
@@ -135,12 +152,13 @@ export async function resumeCommand(
 
       if (!options.debugPrompt) {
         console.log(chalk.gray('Session: ') + formatSession(session));
-        console.log(chalk.gray('Command: ') + chalk.cyan(getResumeCommand(session, target, effectiveForwarding)));
+        console.log(chalk.gray('Command: ') + chalk.cyan(getResumeCommand(launchSession, target, effectiveForwarding)));
         console.log();
+        logCwdOverride();
       }
 
-      if (session.cwd) process.chdir(session.cwd);
-      await resume(session, target, mode, effectiveForwarding, contextOptions);
+      process.chdir(launchCwd);
+      await resume(launchSession, target, mode, effectiveForwarding, contextOptions);
     }
   } catch (error) {
     if (clack.isCancel(error)) {
