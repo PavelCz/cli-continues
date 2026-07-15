@@ -105,7 +105,8 @@ async function parseSessionInfo(filePath: string): Promise<{
   let sessionId = '';
   let cwd = '';
   let gitBranch = '';
-  let sessionName = '';
+  let customTitle = '';
+  let aiTitle = '';
   let firstUserMessage = '';
   let firstTimestamp = '';
   let lastTimestamp = '';
@@ -121,7 +122,10 @@ async function parseSessionInfo(filePath: string): Promise<{
     if (msg.gitBranch && !gitBranch) gitBranch = msg.gitBranch;
     const raw = msg as Record<string, unknown>;
     if (msg.type === 'custom-title' && typeof raw.customTitle === 'string') {
-      sessionName = cleanSummary(raw.customTitle, 200);
+      customTitle = cleanSummary(raw.customTitle, 200);
+    }
+    if (msg.type === 'ai-title' && typeof raw.aiTitle === 'string') {
+      aiTitle = cleanSummary(raw.aiTitle, 200);
     }
     const timestamp = getClaudeMessageTimestamp(msg);
     if (timestamp) {
@@ -157,7 +161,7 @@ async function parseSessionInfo(filePath: string): Promise<{
     sessionId,
     cwd,
     gitBranch,
-    sessionName,
+    sessionName: customTitle || aiTitle,
     firstUserMessage,
     firstTimestamp,
     lastTimestamp,
