@@ -64,6 +64,46 @@ afterEach(() => {
 });
 
 describe('droid parser hardening', () => {
+  it('uses mtime for lightweight recency and excludes single-row stubs', async () => {
+    const home = makeHome();
+    const id = '11111111-1111-4111-8111-111111111111';
+    const file = writeJsonl(
+      path.join(home, '.factory', 'projects', 'tmp-project', `${id}.jsonl`),
+      makeRows({ id, fillerCount: 120 }),
+    );
+    const stub = '22222222-2222-4222-8222-222222222222';
+    writeJsonl(path.join(home, '.factory', 'projects', 'tmp-project', `${stub}.jsonl`), [
+      { type: 'session_start', id: stub, cwd: '/tmp/project' },
+    ]);
+    const updatedAt = new Date('2026-09-20T00:00:00Z');
+    fs.utimesSync(file, updatedAt, updatedAt);
+    const { parseDroidSessions } = await loadDroidParser(home);
+    const sessions = await parseDroidSessions({ lightweight: true });
+    expect(sessions.map((s) => s.id)).toEqual([id]);
+    expect(sessions[0].updatedAt).toEqual(updatedAt);
+  });
+  it('extracts pending array todos while ignoring completed and malformed entries', async () => {
+    const home = makeHome();
+    const id = '11111111-1111-4111-8111-111111111111';
+    writeJsonl(path.join(home, '.factory', 'projects', 'tmp-project', `${id}.jsonl`), [
+      ...makeRows({ id }),
+      {
+        type: 'todo_state',
+        todos: {
+          todos: [
+            { status: 'completed', content: 'Finished' },
+            null,
+            { status: 'pending', content: '  Add tests  ' },
+            { status: 'in_progress', content: 'Implement fix' },
+            { status: 'pending', content: 42 },
+          ],
+        },
+      },
+    ]);
+    const { parseDroidSessions, extractDroidContext } = await loadDroidParser(home);
+    const [session] = await parseDroidSessions();
+    expect((await extractDroidContext(session)).pendingTasks).toEqual(['Add tests', 'Implement fix']);
+  });
   it('discovers sessions from .factory/projects', async () => {
     const home = makeHome();
     const id = '11111111-1111-4111-8111-111111111111';

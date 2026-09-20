@@ -497,7 +497,7 @@ export const DroidTodoStateSchema = z
     type: z.literal('todo_state'),
     id: z.string(),
     timestamp: z.string(),
-    todos: z.union([z.object({ todos: z.string() }).passthrough(), z.string()]),
+    todos: z.union([z.object({ todos: z.union([z.string(), z.array(z.unknown())]) }).passthrough(), z.string()]),
     messageIndex: z.number().optional(),
   })
   .passthrough();
