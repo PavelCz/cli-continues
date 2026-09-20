@@ -37,6 +37,8 @@ npm install -g continues    # gives you `continues` and `cont`
 
 The handoff document is designed so the receiving agent immediately understands what you were doing, what files were touched, what commands ran, and what's left to do.
 
+After a cross-tool handoff, the receiving agent is instructed to acknowledge the context and wait for your next message before resuming work.
+
 ## Usage
 
 ### Interactive (default)

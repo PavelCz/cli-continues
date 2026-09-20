@@ -14,7 +14,7 @@ import {
   resolveTargetForwarding,
 } from './forward-flags.js';
 import { extractContext, saveContext } from './index.js';
-import { getSourceLabels, safePath } from './markdown.js';
+import { getSourceLabels, HANDOFF_WAIT_INSTRUCTION, safePath } from './markdown.js';
 import { IS_WINDOWS, WHICH_CMD } from './platform.js';
 
 export interface HandoffContextOptions {
@@ -217,7 +217,7 @@ function buildInlinePrompt(context: SessionContext, session: UnifiedSession): st
   const sessionFileRef = session.originalPath ? ` (original session: \`${safePath(session.originalPath)}\`)` : '';
   const intro = `I'm continuing a coding session from **${sourceLabel}**${sessionFileRef}. Here's the full context:\n\n---\n\n`;
 
-  return intro + context.markdown;
+  return intro + context.markdown + '\n\n' + HANDOFF_WAIT_INSTRUCTION;
 }
 
 /**
@@ -240,7 +240,7 @@ function buildReferencePrompt(session: UnifiedSession): string {
     `| Context file | \`.continues-handoff.md\` |`,
     session.summary ? `| Last task | ${session.summary.slice(0, 80)} |` : '',
     ``,
-    `Read \`.continues-handoff.md\` first, then continue the work.`,
+    `Read \`.continues-handoff.md\` for context. ${HANDOFF_WAIT_INSTRUCTION}`,
   ]
     .filter(Boolean)
     .join('\n');
@@ -258,7 +258,7 @@ function buildReferencePrompt(session: UnifiedSession): string {
  * this prompt simply instructs the target tool to read that file.
  */
 export function buildWindowsSafePrompt(session: UnifiedSession): string {
-  return `Continuing a coding session from ${session.source}. Read the file .continues-handoff.md in the current directory for full context and continue where it left off.`;
+  return `Session from ${session.source}. Read .continues-handoff.md for context. ${HANDOFF_WAIT_INSTRUCTION}`;
 }
 
 /**

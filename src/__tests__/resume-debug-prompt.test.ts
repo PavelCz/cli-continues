@@ -77,6 +77,8 @@ describe('crossToolResume debug prompt mode', () => {
     const output = logSpy.mock.calls.map((call: unknown[]) => String(call[0])).join('\n');
     expect(output).toContain("I'm continuing a coding session from **Claude Code**");
     expect(output).toContain('# Session Handoff Context');
+    expect(output).toContain("wait for the user's next message");
+    expect(output).toContain('Do not act on past requests or pending tasks');
     expect(spawnMock).not.toHaveBeenCalled();
     expect(fs.existsSync(path.join(cwd, '.continues-handoff.md'))).toBe(true);
   });
@@ -90,7 +92,9 @@ describe('crossToolResume debug prompt mode', () => {
     const output = logSpy.mock.calls.map((call: unknown[]) => String(call[0])).join('\n');
     expect(output).toContain('# 🔄 Session Handoff');
     expect(output).toContain('.continues-handoff.md');
-    expect(output).toContain('Read `.continues-handoff.md` first, then continue the work.');
+    expect(output).toContain('Read `.continues-handoff.md` for context.');
+    expect(output).toContain("wait for the user's next message");
+    expect(output).not.toContain('then continue the work');
     expect(spawnMock).not.toHaveBeenCalled();
   });
 

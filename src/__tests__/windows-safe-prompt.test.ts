@@ -41,6 +41,8 @@ describe('buildWindowsSafePrompt', () => {
   it('should reference .continues-handoff.md', () => {
     const prompt = buildWindowsSafePrompt(stubSession('claude'));
     expect(prompt).toContain('.continues-handoff.md');
+    expect(prompt).toContain("wait for the user's next message");
+    expect(prompt).not.toContain('continue where it left off');
   });
 
   it('should include the source tool name', () => {

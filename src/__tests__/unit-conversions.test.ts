@@ -1381,10 +1381,11 @@ describe('Shared generateHandoffMarkdown', () => {
     expect(warnBIdx).toBeGreaterThan(warnAIdx);
   });
 
-  it('always ends with continuation prompt', () => {
+  it('ends handoffs with instructions to wait for new user input', () => {
     for (const source of ALL_SOURCES) {
       const ctx = contexts[source];
-      expect(ctx.markdown).toContain('You are continuing this session');
+      expect(ctx.markdown.split('\n').at(-1)).toContain("wait for the user's next message");
+      expect(ctx.markdown).not.toContain('Pick up exactly where it left off');
     }
   });
 
@@ -1556,7 +1557,7 @@ describe('All 42 Fixture-Based Conversion Paths', () => {
         expect(md).toContain('**Working Directory**');
         expect(md).toContain('**Last Active**');
         expect(md).toContain('## Recent Conversation');
-        expect(md).toContain('You are continuing this session');
+        expect(md).toContain("wait for the user's next message");
 
         // Source attribution
         expect(md).toContain(getSourceLabels()[source]);

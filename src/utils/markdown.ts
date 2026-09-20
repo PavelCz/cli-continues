@@ -28,6 +28,9 @@ import {
   WRITE_TOOLS,
 } from '../types/tool-names.js';
 
+export const HANDOFF_WAIT_INSTRUCTION =
+  "This handoff is context only. Briefly acknowledge it, then wait for the user's next message. Do not act on past requests or pending tasks, run commands, or change files until the user gives new instructions.";
+
 /** Replace home directory prefix with ~ and escape backticks for safe markdown inline code */
 const _home = os.homedir();
 export function safePath(p: string): string {
@@ -342,9 +345,7 @@ export function generateHandoffMarkdown(
 
   lines.push('---');
   lines.push('');
-  lines.push(
-    '**You are continuing this session. Pick up exactly where it left off — review the conversation above, check pending tasks, and keep going.**',
-  );
+  lines.push(`**${HANDOFF_WAIT_INSTRUCTION}**`);
 
   return lines.join('\n');
 }
