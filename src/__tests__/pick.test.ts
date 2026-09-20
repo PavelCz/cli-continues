@@ -20,7 +20,7 @@ const testState = vi.hoisted(() => ({
 vi.mock('@clack/prompts', () => ({
   cancel: vi.fn(),
   intro: vi.fn(),
-  isCancel: vi.fn(() => false),
+  isCancel: vi.fn((value: unknown) => typeof value === 'symbol'),
   log: {
     error: vi.fn(),
     info: vi.fn(),
@@ -126,6 +126,36 @@ describe('interactivePick native resume', () => {
       undefined,
       expect.any(Object),
     );
+    expect(testState.text).toHaveBeenCalledTimes(1); // Directory only, no model prompt.
+  });
+
+  it.each(['chosen-model', ''])('asks for a target model on cross-tool handoff (%s)', async (model) => {
+    const session = makeSession('cross-tool', 'claude');
+    testState.getSessionsByCwd.mockResolvedValue([session]);
+    testState.selectTargetTool.mockResolvedValue('antigravity');
+    testState.select.mockResolvedValue('session');
+    testState.text.mockResolvedValue(model);
+    await interactivePick(
+      { forwardArgs: ['--model=old-model', '--sandbox=true'] },
+      { isTTY: true, supportsColor: false, version: 'test' },
+    );
+    expect(testState.text).toHaveBeenCalledWith(expect.objectContaining({ initialValue: 'old-model' }));
+    expect(testState.resume).toHaveBeenCalledWith(
+      expect.any(Object),
+      'antigravity',
+      'inline',
+      { tailArgs: ['--sandbox=true', ...(model ? ['--model', model] : [])] },
+      expect.any(Object),
+    );
+  });
+
+  it('cancels before launch if the model prompt is cancelled', async () => {
+    testState.getSessionsByCwd.mockResolvedValue([makeSession('cross-tool', 'claude')]);
+    testState.selectTargetTool.mockResolvedValue('codex');
+    testState.text.mockResolvedValue(Symbol('cancel'));
+    await interactivePick({}, { isTTY: true, supportsColor: false, version: 'test' });
+    expect(testState.resume).not.toHaveBeenCalled();
+    expect(testState.select).not.toHaveBeenCalled();
   });
 
   it('groups all sessions by collapsible directory and sorts groups and sessions by recency', async () => {

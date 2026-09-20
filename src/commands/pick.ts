@@ -5,7 +5,7 @@ import { formatSessionForSelect, sourceColors } from '../display/format.js';
 import { showNoSessionsHelp } from '../display/help.js';
 import { maybePromptGithubStar } from '../display/star-prompt.js';
 import type { SessionSource, UnifiedSession } from '../types/index.js';
-import type { HandoffForwardingOptions } from '../utils/forward-flags.js';
+import { type HandoffForwardingOptions, parseForwardFlags } from '../utils/forward-flags.js';
 import { getAllSessions, getSessionsByCwd, getSessionsBySource } from '../utils/index.js';
 import { peekSession } from '../utils/peek.js';
 import {
@@ -398,12 +398,30 @@ export async function interactivePick(
     });
     if (!targetTool) return;
 
+    let forwarding: HandoffForwardingOptions | undefined;
+    if (targetTool !== session.source) {
+      const args = options.forwardArgs ?? [];
+      const modelFlags = parseForwardFlags(args).occurrences.filter((flag) => flag.key === 'model');
+      const previousModel = modelFlags.at(-1)?.value;
+      const model = await clack.text({
+        message: `Model for ${targetTool} (leave blank for its configured default):`,
+        placeholder: 'Default model',
+        initialValue: typeof previousModel === 'string' ? previousModel : '',
+        validate: (value) => (value?.trim().startsWith('-') ? 'Enter a model name, not a CLI flag.' : undefined),
+      });
+      if (clack.isCancel(model)) {
+        clack.cancel('Cancelled');
+        return;
+      }
+      const modelIndices = new Set(modelFlags.flatMap((flag) => flag.rawIndices));
+      const tailArgs = args.filter((_, index) => !modelIndices.has(index));
+      if (model.trim()) tailArgs.push('--model', model.trim());
+      forwarding = { tailArgs };
+    }
+
     const launchCwd = await selectLaunchCwd(session, currentDir);
     if (!launchCwd) return;
     const launchSession = withLaunchCwd(session, launchCwd);
-
-    const forwarding: HandoffForwardingOptions | undefined =
-      targetTool !== session.source ? { tailArgs: options.forwardArgs } : undefined;
 
     if (forwarding) {
       const resolved = resolveCrossToolForwarding(targetTool, forwarding);

@@ -39,6 +39,8 @@ The handoff document is designed so the receiving agent immediately understands 
 
 After a cross-tool handoff, the receiving agent is instructed to acknowledge the context and wait for your next message before resuming work.
 
+When switching tools in the interactive picker, enter a model name for the target CLI or leave it blank to use that CLI's configured default. An existing forwarded `--model` is prefilled and can be replaced. Native resumes do not ask for a model.
+
 ## Usage
 
 ### Interactive (default)
