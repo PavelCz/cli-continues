@@ -3,14 +3,20 @@ import * as path from 'node:path';
 import type { VerbosityConfig } from '../config/index.js';
 import { getPreset } from '../config/index.js';
 import { logger } from '../logger.js';
-import type { ConversationMessage, SessionContext, SessionNotes, UnifiedSession } from '../types/index.js';
+import type {
+  ConversationMessage,
+  SessionContext,
+  SessionNotes,
+  SessionParseOptions,
+  UnifiedSession,
+} from '../types/index.js';
 import { CursorTranscriptLineSchema } from '../types/schemas.js';
-import { cleanUserQueryText, isRealUserMessage, isSystemContent } from '../utils/content.js';
-import { findFiles } from '../utils/fs-helpers.js';
+import { cleanUserQueryText, isSystemContent } from '../utils/content.js';
+import { findFiles, mapConcurrent } from '../utils/fs-helpers.js';
 import { getFileStats, readJsonlFile, scanJsonlHead } from '../utils/jsonl.js';
 import { generateHandoffMarkdown } from '../utils/markdown.js';
 import { cleanSummary, extractRepoFromCwd, homeDir } from '../utils/parser-helpers.js';
-import { cwdFromSlug } from '../utils/slug.js';
+import { cwdFromSlug, matchesCwd } from '../utils/slug.js';
 import {
   type AnthropicMessage,
   extractAnthropicToolData,
@@ -122,13 +128,14 @@ function cleanCursorUserText(text: string): string {
   return stripCursorMetadataTags(cleanUserQueryText(text)).trim();
 }
 
-function isCursorNoiseText(rawText: string, cleanedText: string, role: NormalizedCursorLine['role']): boolean {
+function isCursorNoiseText(rawText: string, cleanedText: string): boolean {
   const raw = rawText.trim();
   const cleaned = cleanedText.trim();
   if (!cleaned) return true;
+  if (cleaned === '[REDACTED]') return true;
   if (isSystemContent(raw) || isSystemContent(cleaned)) return true;
   if (raw.startsWith('<system_reminder>') || cleaned.startsWith('<system_reminder>')) return true;
-  if (role === 'user' && !isRealUserMessage(cleaned)) return true;
+  if (cleaned.includes('Session Handoff')) return true;
   return false;
 }
 
@@ -226,7 +233,60 @@ async function readNormalizedTranscript(filePath: string): Promise<NormalizedCur
  * filename — `getSessionId()` derives the UUID, and `parseCursorSessions()`
  * deduplicates by id when both layouts coexist for the same session.
  */
-async function findTranscriptFiles(): Promise<string[]> {
+function normalizeCwdForComparison(cwd: string): string {
+  const normalized = path.normalize(path.resolve(cwd)).replace(/\\/g, '/');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function cursorSlugsFromCwd(cwd: string): string[] {
+  const normalized = normalizeCwdForComparison(cwd).replace(/\\/g, '/').replace(/^\/+/, '');
+  return [
+    normalized.replace(/[:/.]/g, '-'),
+    normalized.replace(/[:/._]/g, '-'),
+    normalized.replace(':', '').replace(/[/._]/g, '-'),
+  ];
+}
+
+type ProjectCwdCache = Map<string, Promise<string | undefined>>;
+
+function cachedRepoCwd(projectDir: string, cache: ProjectCwdCache): Promise<string | undefined> {
+  let pending = cache.get(projectDir);
+  if (!pending) {
+    pending = readRepoJsonCwd(projectDir);
+    cache.set(projectDir, pending);
+  }
+  return pending;
+}
+
+async function readRepoJsonCwd(projectDir: string): Promise<string | undefined> {
+  try {
+    const content = await fs.promises.readFile(path.join(projectDir, 'repo.json'), 'utf8');
+    const parsed = JSON.parse(content) as unknown;
+    if (!isRecord(parsed)) return undefined;
+
+    for (const key of ['workspace', 'rootPath', 'path']) {
+      const value = getStringField(parsed, key);
+      if (value) return value;
+    }
+  } catch (err) {
+    logger.debug('cursor: failed to read project metadata while filtering by cwd', projectDir, err);
+  }
+
+  return undefined;
+}
+
+async function projectMatchesCwd(projectDir: string, targetCwd: string, cache: ProjectCwdCache): Promise<boolean> {
+  const repoCwd = await cachedRepoCwd(projectDir, cache);
+  if (repoCwd) return matchesCwd(normalizeCwdForComparison(repoCwd), normalizeCwdForComparison(targetCwd));
+
+  // Projects without repo.json can still be selected safely by comparing the
+  // directory name with Cursor's direct slug encoding. Do not decode the slug
+  // here: that is the exponential operation this cwd lookup is avoiding.
+  const slug = path.basename(projectDir);
+  return cursorSlugsFromCwd(targetCwd).some((target) => slug === target || slug.startsWith(`${target}-`));
+}
+
+async function findTranscriptFiles(options: SessionParseOptions, cache: ProjectCwdCache): Promise<string[]> {
   if (!fs.existsSync(CURSOR_PROJECTS_DIR)) return [];
 
   const files: string[] = [];
@@ -234,7 +294,10 @@ async function findTranscriptFiles(): Promise<string[]> {
     const projectDirs = fs.readdirSync(CURSOR_PROJECTS_DIR, { withFileTypes: true });
     for (const projectDir of projectDirs) {
       if (!projectDir.isDirectory()) continue;
-      const transcriptsDir = path.join(CURSOR_PROJECTS_DIR, projectDir.name, 'agent-transcripts');
+      const projectPath = path.join(CURSOR_PROJECTS_DIR, projectDir.name);
+      if (options.cwd && !(await projectMatchesCwd(projectPath, options.cwd, cache))) continue;
+
+      const transcriptsDir = path.join(projectPath, 'agent-transcripts');
       const found = findFiles(transcriptsDir, {
         match: (entry, fullPath) => entry.name.endsWith('.jsonl') && fullPath.includes('agent-transcripts'),
         maxDepth: 2,
@@ -292,47 +355,25 @@ function getSessionId(filePath: string): string {
  *
  * Falls back to slug-derived cwd when `repo.json` is absent or unreadable.
  */
-async function resolveProjectCwd(projectDir: string, slug: string, cache: Map<string, string>): Promise<string> {
-  const fallback = cwdFromSlug(slug);
-  if (!projectDir) return fallback;
-
-  // Cache the resolved cwd per project directory: a single `repo.json` is
-  // shared by every transcript in a project, and discovery typically iterates
-  // many sibling sessions in the same project.
-  const cached = cache.get(projectDir);
-  if (cached !== undefined) return cached || fallback;
-
-  const repoJsonPath = path.join(projectDir, 'repo.json');
-  if (!fs.existsSync(repoJsonPath)) {
-    cache.set(projectDir, '');
-    return fallback;
-  }
-
-  let resolved = '';
-  try {
-    const content = await fs.promises.readFile(repoJsonPath, 'utf8');
-    const parsed = JSON.parse(content) as unknown;
-    if (isRecord(parsed)) {
-      for (const key of ['workspace', 'rootPath', 'path']) {
-        const value = getStringField(parsed, key);
-        if (value) {
-          resolved = value;
-          break;
-        }
-      }
-    }
-  } catch (err) {
-    logger.debug('cursor: failed to read project metadata', repoJsonPath, err);
-  }
-
-  cache.set(projectDir, resolved);
-  return resolved || fallback;
+async function resolveProjectCwd(
+  projectDir: string,
+  slug: string,
+  cache: ProjectCwdCache,
+  cwdFallback?: string,
+): Promise<string> {
+  const fallback = (): string =>
+    cwdFallback && cursorSlugsFromCwd(cwdFallback).includes(slug) ? cwdFallback : cwdFromSlug(slug);
+  if (!projectDir) return fallback();
+  return (await cachedRepoCwd(projectDir, cache)) || fallback();
 }
 
 /**
  * Parse first few messages for summary
  */
-async function parseSessionInfo(filePath: string): Promise<{
+async function parseSessionInfo(
+  filePath: string,
+  options: SessionParseOptions = {},
+): Promise<{
   firstUserMessage: string;
   firstTimestamp?: Date;
   lineCount: number;
@@ -343,8 +384,10 @@ async function parseSessionInfo(filePath: string): Promise<{
   let firstTimestamp: Date | undefined;
   let model: string | undefined;
 
-  // Stream-count lines without full JSON parse (fast)
-  const stats = await getFileStats(filePath);
+  // Stream-count lines without full JSON parse (fast). Skipped in lightweight
+  // discovery: exact line counts are cosmetic metadata, and streaming entire
+  // transcripts dominates discovery time on machines with many sessions.
+  const stats = options.lightweight ? { lines: 0, bytes: fs.statSync(filePath).size } : await getFileStats(filePath);
 
   // Scan head for first user message. The 100-record cap is a discovery
   // optimization (avoids streaming megabyte transcripts twice — once here,
@@ -370,7 +413,7 @@ async function parseSessionInfo(filePath: string): Promise<{
       for (const block of line.content) {
         if (block.type !== 'text' || !block.text) continue;
         const cleaned = cleanCursorUserText(block.text);
-        if (!isCursorNoiseText(block.text, cleaned, line.role)) {
+        if (!isCursorNoiseText(block.text, cleaned)) {
           firstUserMessage = cleaned;
           break;
         }
@@ -392,26 +435,36 @@ async function parseSessionInfo(filePath: string): Promise<{
 /**
  * Parse all Cursor sessions
  */
-export async function parseCursorSessions(): Promise<UnifiedSession[]> {
-  const files = await findTranscriptFiles();
+export async function parseCursorSessions(options: SessionParseOptions = {}): Promise<UnifiedSession[]> {
+  const projectCwdCache: ProjectCwdCache = new Map();
+  const files = await findTranscriptFiles(options, projectCwdCache);
   const sessionsById = new Map<string, UnifiedSession>();
-  const projectCwdCache = new Map<string, string>();
+  const resolvedProjectCwds = new Map<string, Promise<string>>();
+  const cwdFallback = options.cwd ? path.resolve(options.cwd) : undefined;
 
-  for (const filePath of files) {
+  const parsed = await mapConcurrent(files, 16, async (filePath): Promise<UnifiedSession | null> => {
     try {
-      const { firstUserMessage, firstTimestamp, lineCount, bytes, model } = await parseSessionInfo(filePath);
+      const { firstUserMessage, firstTimestamp, lineCount, bytes, model } = await parseSessionInfo(filePath, options);
       // Do not gate on head-scan `messageCount`: a long session whose first
       // valid record sits past the 100-line head would be dropped here even
       // though `extractCursorContext()` reads the full file. The downstream
       // `lines > 0 && bytes > 0` filter still excludes truly empty files.
       const fileStats = fs.statSync(filePath);
       const slug = getProjectSlug(filePath);
-      const cwd = await resolveProjectCwd(getProjectDir(filePath), slug, projectCwdCache);
+      const projectDir = getProjectDir(filePath);
+      let pendingCwd = resolvedProjectCwds.get(projectDir);
+      if (!pendingCwd) {
+        pendingCwd = resolveProjectCwd(projectDir, slug, projectCwdCache, cwdFallback);
+        resolvedProjectCwds.set(projectDir, pendingCwd);
+      }
+      const cwd = await pendingCwd;
+      if (options.cwd && !matchesCwd(normalizeCwdForComparison(cwd), normalizeCwdForComparison(options.cwd)))
+        return null;
 
       const summary = cleanSummary(firstUserMessage);
 
       const id = getSessionId(filePath);
-      const next: UnifiedSession = {
+      return {
         id,
         source: 'cursor',
         cwd,
@@ -424,23 +477,26 @@ export async function parseCursorSessions(): Promise<UnifiedSession[]> {
         summary: summary || undefined,
         model,
       };
-
-      // Discovery may surface the same logical session twice when a session
-      // dir contains both `<uuid>/transcript.jsonl` and `<uuid>.jsonl` (or a
-      // legacy `<uuid>/<uuid>.jsonl` left behind). Keep the most recently
-      // updated copy so the picker shows the canonical entry.
-      const existing = sessionsById.get(id);
-      if (!existing || existing.updatedAt.getTime() < next.updatedAt.getTime()) {
-        sessionsById.set(id, next);
-      }
     } catch (err) {
       logger.debug('cursor: skipping unparseable session', filePath, err);
-      // Skip files we can't parse
+      return null;
+    }
+  });
+
+  // Discovery may surface the same logical session twice when a session
+  // dir contains both `<uuid>/transcript.jsonl` and `<uuid>.jsonl` (or a
+  // legacy `<uuid>/<uuid>.jsonl` left behind). Keep the most recently
+  // updated copy so the picker shows the canonical entry.
+  for (const next of parsed) {
+    if (!next) continue;
+    const existing = sessionsById.get(next.id);
+    if (!existing || existing.updatedAt.getTime() < next.updatedAt.getTime()) {
+      sessionsById.set(next.id, next);
     }
   }
 
   return Array.from(sessionsById.values())
-    .filter((s) => s.bytes > 0 && s.lines > 0)
+    .filter((s) => s.bytes > 0 && (options.lightweight || s.lines > 0))
     .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
 }
 
@@ -502,7 +558,7 @@ export async function extractCursorContext(session: UnifiedSession, config?: Ver
     for (const block of line.content) {
       if (block.type === 'text' && block.text) {
         const cleaned = line.role === 'user' ? cleanCursorUserText(block.text) : stripCursorMetadataTags(block.text);
-        if (isCursorNoiseText(block.text, cleaned, line.role)) continue;
+        if (isCursorNoiseText(block.text, cleaned)) continue;
         if (cleaned) textParts.push(cleaned);
       }
     }

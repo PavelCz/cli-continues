@@ -36,6 +36,24 @@ afterEach(() => {
 });
 
 describe('codex parser hardening', () => {
+  it('finds response_item user summaries while retaining the latest cwd', async () => {
+    const home = makeCodexHome();
+    writeRollout(home, 'sessions', 'rollout-2026-09-01T00-00-00-response.jsonl', [
+      { type: 'session_meta', payload: { id: 'response-session', cwd: '/tmp/old', timestamp: '2026-09-01T00:00:00Z' } },
+      {
+        type: 'response_item',
+        payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '# AGENTS.md instructions' }] },
+      },
+      {
+        type: 'response_item',
+        payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Fix the parser summary' }] },
+      },
+      { type: 'turn_context', payload: { cwd: '/tmp/new' } },
+    ]);
+    const { parseCodexSessions } = await loadCodexParser(home);
+    const [session] = await parseCodexSessions({ lightweight: true });
+    expect(session).toMatchObject({ summary: 'Fix the parser summary', cwd: '/tmp/new' });
+  });
   it('uses the latest thread name from the session index', async () => {
     const home = makeCodexHome();
     const id = 'named-session-id';

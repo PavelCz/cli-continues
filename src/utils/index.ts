@@ -123,17 +123,23 @@ export function indexNeedsRebuild(source?: SessionSource): boolean {
 /**
  * Build the unified session index
  */
-export async function buildIndex(force = false): Promise<UnifiedSession[]> {
+export async function buildIndex(force = false, cwd?: string): Promise<UnifiedSession[]> {
   ensureDirectories();
 
   // Check if we can use cached index
   if (!force && !indexNeedsRebuild()) {
-    return loadIndex();
+    const cached = loadIndex();
+    return cwd ? cached.filter((session) => matchesCwd(session.cwd, cwd)) : cached;
   }
 
   // Parse all sessions from all sources in parallel — use allSettled so one
-  // broken parser doesn't crash the entire CLI
-  const results = await Promise.allSettled(Object.values(adapters).map((a) => a.parseSessions()));
+  // broken parser doesn't crash the entire CLI. Only tree-aware adapters may
+  // narrow discovery: exact-project lookups can omit descendant/moved sessions.
+  const results = await Promise.allSettled(
+    Object.values(adapters).map((a) =>
+      a.parseSessions(cwd && a.supportsCwdTreeLookup ? { lightweight: true, cwd } : { lightweight: true }),
+    ),
+  );
 
   const allSessions = results
     .filter((r): r is PromiseFulfilledResult<UnifiedSession[]> => r.status === 'fulfilled')
@@ -141,6 +147,9 @@ export async function buildIndex(force = false): Promise<UnifiedSession[]> {
 
   // Sort by updated time (newest first)
   allSessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+
+  // A partial scan must never replace global or per-source caches.
+  if (cwd) return allSessions.filter((session) => matchesCwd(session.cwd, cwd));
 
   // Write to index file — first line is the env fingerprint
   writeIndexFile(INDEX_FILE, allSessions);
@@ -236,11 +245,11 @@ export async function getSessionsBySource(source: SessionSource, forceRebuild = 
 }
 
 /**
- * Get current-working-directory sessions from the complete index.
+ * Get sessions for a working directory and its descendants, using a cached
+ * complete index or a scoped scan that cannot replace the complete cache.
  */
 export async function getSessionsByCwd(cwd: string, forceRebuild = false): Promise<UnifiedSession[]> {
-  const sessions = await buildIndex(forceRebuild);
-  return sessions.filter((session) => matchesCwd(session.cwd, cwd));
+  return buildIndex(forceRebuild, cwd);
 }
 
 /**

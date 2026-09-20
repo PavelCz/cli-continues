@@ -40,6 +40,15 @@ function writeCursorRepoJson(home: string, slug: string, data: unknown): void {
   fs.writeFileSync(path.join(dir, 'repo.json'), JSON.stringify(data), 'utf8');
 }
 
+function copyCursorFixture(home: string, slug: string, sessionId: string, fixtureName: string): string {
+  const dir = path.join(home, '.cursor', 'projects', slug, 'agent-transcripts', sessionId);
+  fs.mkdirSync(dir, { recursive: true });
+  const fixturePath = path.join(import.meta.dirname, 'fixtures', fixtureName);
+  const transcriptPath = path.join(dir, `${sessionId}.jsonl`);
+  fs.copyFileSync(fixturePath, transcriptPath);
+  return transcriptPath;
+}
+
 function cursorTextRow(role: 'user' | 'assistant', text: string, timestamp: string): unknown {
   return {
     role,
@@ -128,6 +137,67 @@ describe('cursor parser confidence warnings', () => {
 });
 
 describe('cursor parser hardening', () => {
+  it('scopes discovery to a repository and its subdirectories using metadata before slug fallback', async () => {
+    const home = makeCursorHome();
+    const cwd = '/tmp/my_repo';
+    const rows = [cursorTextRow('user', 'Inspect this project', '2026-07-20T00:00:00Z')];
+    const longSlug = 'missing-project-with-a-very-long-and-ambiguous-slug-one-two-three-four';
+    writeCursorTranscript(home, longSlug, 'root', rows);
+    writeCursorRepoJson(home, longSlug, { workspace: cwd });
+    writeCursorTranscript(home, 'child', 'child', rows);
+    writeCursorRepoJson(home, 'child', { workspace: `${cwd}/packages/api` });
+    writeCursorTranscript(home, 'other', 'other', rows);
+    writeCursorRepoJson(home, 'other', { workspace: '/tmp/other' });
+    const { parseCursorSessions } = await loadCursorParser(home);
+    const sessions = await parseCursorSessions({ cwd, lightweight: true });
+    expect(sessions.map((s) => s.id).sort()).toEqual(['child', 'root']);
+    expect(sessions.find((s) => s.id === 'child')?.cwd).toBe(`${cwd}/packages/api`);
+    expect(sessions.every((s) => s.bytes > 0)).toBe(true);
+  });
+
+  it('uses the exact requested cwd for encoded underscores when repo.json is absent', async () => {
+    const home = makeCursorHome();
+    const cwd = '/tmp/missing_workspace/deep-project';
+    writeCursorTranscript(home, 'tmp-missing-workspace-deep-project', 'exact', [
+      cursorTextRow('user', 'Inspect project', '2026-07-20T00:00:00Z'),
+    ]);
+    const { parseCursorSessions } = await loadCursorParser(home);
+    const [session] = await parseCursorSessions({ cwd });
+    expect(session?.cwd).toBe(cwd);
+  });
+  it('keeps a user_query whose text starts with an absolute path while filtering Cursor system reminders', async () => {
+    const home = makeCursorHome();
+    const sessionId = '12345678-1234-1234-1234-123456789abc';
+    const originalPath = copyCursorFixture(home, 'Users-test-project', sessionId, 'cursor-user-query-path.jsonl');
+    const { extractCursorContext } = await loadCursorParser(home);
+
+    const context = await extractCursorContext({
+      id: sessionId,
+      source: 'cursor',
+      cwd: '/tmp/cursor-project',
+      repo: 'test/project',
+      lines: 4,
+      bytes: fs.statSync(originalPath).size,
+      createdAt: new Date('2026-07-20T07:03:00.000Z'),
+      updatedAt: new Date('2026-07-20T07:03:00.000Z'),
+      originalPath,
+    });
+
+    expect(context.recentMessages).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: '/Users/example/project/scripts/check.ts\n\nPlease inspect this file.',
+      }),
+      expect.objectContaining({ role: 'assistant', content: 'I will inspect the file.' }),
+    ]);
+    expect(context.markdown).toContain('### User');
+    expect(context.markdown).toContain('/Users/example/project/scripts/check.ts');
+    expect(context.markdown).toContain('### Assistant');
+    expect(context.markdown.indexOf('### User')).toBeLessThan(context.markdown.indexOf('### Assistant'));
+    expect(context.markdown).not.toContain('internal Cursor state');
+    expect(context.markdown).not.toContain('[REDACTED]');
+  });
+
   it('discovers nested transcript.jsonl and flat Cursor CLI transcript layouts', async () => {
     const home = makeCursorHome();
     const nestedId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';

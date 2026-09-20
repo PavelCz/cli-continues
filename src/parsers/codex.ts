@@ -92,6 +92,28 @@ async function parseSessionInfo(filePath: string): Promise<{
       firstUserMessage = typeof msg.content === 'string' ? (msg.content as string) : '';
     }
 
+    if (!firstUserMessage && msg.type === 'response_item') {
+      const payload = msg.payload as Record<string, unknown> | undefined;
+      if (payload?.type === 'message' && payload.role === 'user' && Array.isArray(payload.content)) {
+        const text = payload.content
+          .flatMap((part: unknown) => {
+            if (!part || typeof part !== 'object') return [];
+            const block = part as Record<string, unknown>;
+            return block.type === 'input_text' && typeof block.text === 'string' ? [block.text] : [];
+          })
+          .join('\n');
+        if (
+          text &&
+          !text.startsWith('<environment_context>') &&
+          !text.startsWith('<permissions') &&
+          !text.startsWith('# AGENTS.md')
+        ) {
+          firstUserMessage = text;
+        }
+      }
+    }
+
+    // Do not stop after the summary: later turns can change the session cwd.
     if (msg.type === 'turn_context') {
       const payload = msg.payload as Record<string, unknown> | undefined;
       if (typeof payload?.cwd === 'string' && payload.cwd) latestCwd = payload.cwd;

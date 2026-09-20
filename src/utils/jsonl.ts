@@ -7,6 +7,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { logger } from '../logger.js';
 
 const DEFAULT_MAX_LINE_CHARS = 16 * 1024 * 1024;
+const HEAD_SCAN_MAX_BYTES = 512 * 1024;
 
 export interface JsonlReadOptions {
   /**
@@ -148,6 +149,7 @@ export async function readJsonlFile<T = unknown>(filePath: string, options?: Jso
  * Scan the first N lines of a JSONL file, calling `visitor` on each parsed line.
  * The visitor returns 'continue' to keep reading or 'stop' to abort early.
  * Useful for extracting metadata from session headers without reading the full file.
+ * Defaults to a 512 KiB window; a record cut off by that window is not visited.
  */
 export async function scanJsonlHead(
   filePath: string,
@@ -155,6 +157,7 @@ export async function scanJsonlHead(
   visitor: (parsed: unknown, lineIndex: number) => 'continue' | 'stop',
   options?: JsonlReadOptions,
 ): Promise<void> {
+  if (maxLines <= 0) return;
   if (!fs.existsSync(filePath)) return;
 
   await scanJsonlLines(
@@ -163,13 +166,14 @@ export async function scanJsonlHead(
       if (lineIndex >= maxLines) return 'stop';
       try {
         const parsed = JSON.parse(line);
-        return visitor(parsed, lineIndex);
+        const action = visitor(parsed, lineIndex);
+        return lineIndex + 1 >= maxLines ? 'stop' : action;
       } catch {
         logger.debug('jsonl: skipping invalid line at index', lineIndex, 'in', filePath);
       }
-      return 'continue';
+      return lineIndex + 1 >= maxLines ? 'stop' : 'continue';
     },
-    options,
+    { ...options, maxBytes: options?.maxBytes ?? HEAD_SCAN_MAX_BYTES },
   );
 }
 

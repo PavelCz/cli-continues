@@ -61,6 +61,8 @@ export interface ToolAdapter {
   parseSessions: (options?: SessionParseOptions) => Promise<UnifiedSession[]>;
   /** True when parseSessions({ cwd }) can avoid a full global scan. */
   supportsCwdLookup?: boolean;
+  /** True when cwd discovery also retains all descendant project directories. */
+  supportsCwdTreeLookup?: boolean;
   /** Extract full context for cross-tool handoff */
   extractContext: (session: UnifiedSession, config?: VerbosityConfig) => Promise<SessionContext>;
   /** CLI args to resume a session natively */
@@ -835,6 +837,8 @@ register({
   binaryName: 'cursor-agent',
   binaryFallbacks: ['agent'],
   parseSessions: parseCursorSessions,
+  supportsCwdTreeLookup: true,
+  supportsCwdLookup: true,
   extractContext: extractCursorContext,
   nativeResumeArgs: (s) => ['--resume', s.id],
   crossToolArgs: (prompt) => [prompt],

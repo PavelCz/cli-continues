@@ -6,6 +6,7 @@ const testState = vi.hoisted(() => ({
   fakeHome: `/tmp/continues-index-source-test-${Date.now()}-${Math.random().toString(16).slice(2)}`,
   parseClaude: vi.fn(),
   parseCodex: vi.fn(),
+  parseCursor: vi.fn(),
 }));
 
 vi.mock('../utils/parser-helpers.js', () => ({
@@ -13,8 +14,14 @@ vi.mock('../utils/parser-helpers.js', () => ({
 }));
 
 vi.mock('../parsers/registry.js', () => ({
-  ALL_TOOLS: ['claude', 'codex'],
+  ALL_TOOLS: ['claude', 'codex', 'cursor'],
   adapters: {
+    cursor: {
+      name: 'cursor',
+      parseSessions: testState.parseCursor,
+      supportsCwdLookup: true,
+      supportsCwdTreeLookup: true,
+    },
     claude: {
       name: 'claude',
       envVar: 'CLAUDE_CONFIG_DIR',
@@ -50,6 +57,7 @@ describe('source-scoped session index', () => {
     fs.rmSync(testState.fakeHome, { recursive: true, force: true });
     testState.parseClaude.mockReset();
     testState.parseCodex.mockReset();
+    testState.parseCursor.mockReset().mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -93,14 +101,38 @@ describe('source-scoped session index', () => {
     expect(testState.parseCodex).not.toHaveBeenCalled();
   });
 
-  it('stale cwd lookups rebuild the full index and include adapters without direct cwd lookup', async () => {
+  it('cwd lookups narrow only tree-aware adapters and retain subdirectory sessions', async () => {
     testState.parseClaude.mockResolvedValue([makeSession('claude-1', 'claude', '/tmp/project/subdir')]);
     testState.parseCodex.mockResolvedValue([makeSession('codex-1', 'codex', '/tmp/project')]);
 
     const sessions = await getSessionsByCwd('/tmp/project');
 
     expect(sessions.map((session) => session.id)).toEqual(['claude-1', 'codex-1']);
-    expect(testState.parseClaude).toHaveBeenCalledWith();
-    expect(testState.parseCodex).toHaveBeenCalledWith();
+    expect(testState.parseClaude).toHaveBeenCalledWith({ lightweight: true });
+    expect(testState.parseCodex).toHaveBeenCalledWith({ lightweight: true });
+    expect(testState.parseCursor).toHaveBeenCalledWith({ lightweight: true, cwd: '/tmp/project' });
+  });
+
+  it('scoped rebuilds do not replace global or source caches', async () => {
+    const elsewhere = makeSession('elsewhere', 'cursor', '/tmp/elsewhere');
+    testState.parseClaude.mockResolvedValue([]);
+    testState.parseCodex.mockResolvedValue([]);
+    testState.parseCursor.mockResolvedValue([elsewhere]);
+    await getAllSessions(true);
+    testState.parseCursor.mockResolvedValue([makeSession('local', 'cursor')]);
+
+    expect((await getSessionsByCwd('/tmp/project', true)).map((s) => s.id)).toEqual(['local']);
+    expect((await getAllSessions()).map((s) => s.id)).toEqual(['elsewhere']);
+    expect((await getSessionsBySource('cursor')).map((s) => s.id)).toEqual(['elsewhere']);
+  });
+
+  it('a cold scoped scan does not create a partial global cache', async () => {
+    testState.parseClaude.mockResolvedValue([]);
+    testState.parseCodex.mockResolvedValue([]);
+    testState.parseCursor.mockResolvedValue([makeSession('local', 'cursor')]);
+    await getSessionsByCwd('/tmp/project');
+    testState.parseCursor.mockResolvedValue([makeSession('elsewhere', 'cursor', '/tmp/elsewhere')]);
+    expect((await getAllSessions()).map((s) => s.id)).toEqual(['elsewhere']);
+    expect(testState.parseCursor).toHaveBeenLastCalledWith({ lightweight: true });
   });
 });

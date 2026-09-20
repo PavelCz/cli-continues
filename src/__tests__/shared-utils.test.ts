@@ -85,6 +85,24 @@ describe('readJsonlFile', () => {
 });
 
 describe('scanJsonlHead', () => {
+  it('caps the default byte window without affecting full reads', async () => {
+    const file = path.join(makeTmpDir(), 'large.jsonl');
+    fs.writeFileSync(file, `${JSON.stringify({ text: 'x'.repeat(512 * 1024) })}\n{"i":1}\n`);
+    const visitor = vi.fn(() => 'continue' as const);
+    await scanJsonlHead(file, 100, visitor);
+    expect(visitor).not.toHaveBeenCalled();
+    expect(await readJsonlFile(file)).toHaveLength(2);
+  });
+
+  it('preserves multibyte text across chunks and a final line without newline', async () => {
+    const file = path.join(makeTmpDir(), 'unicode.jsonl');
+    const record = { text: 'x'.repeat(65_526) + '🌱終' };
+    fs.writeFileSync(file, JSON.stringify(record));
+    const visitor = vi.fn(() => 'continue' as const);
+    await scanJsonlHead(file, 1, visitor);
+    expect(visitor).toHaveBeenCalledExactlyOnceWith(record, 0);
+  });
+
   it('scans first N lines and stops', async () => {
     const dir = makeTmpDir();
     const file = path.join(dir, 'test.jsonl');

@@ -1,10 +1,31 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { cwdFromSlug } from '../utils/slug.js';
 
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, existsSync: vi.fn(actual.existsSync) };
+});
+
 describe('cwdFromSlug', () => {
+  it('bounds probes for missing paths with many ambiguous separators', () => {
+    const exists = vi.mocked(fs.existsSync);
+    const original = exists.getMockImplementation();
+    let probes = 0;
+    exists.mockImplementation(() => {
+      if (++probes > 10_000) throw new Error('Unbounded slug search');
+      return false;
+    });
+    try {
+      const slug = 'private-tmp-missing-project-with-many-dashes-and-underscores-session-one-two-three';
+      expect(cwdFromSlug(slug)).toBe(`/${slug.replaceAll('-', '/')}`);
+      expect(probes).toBeLessThanOrEqual(10_000);
+    } finally {
+      exists.mockImplementation(original!);
+    }
+  });
   const itWindows = process.platform === 'win32' ? it : it.skip;
 
   itWindows('resolves Windows drive-letter slugs using existing path', () => {
@@ -46,6 +67,7 @@ describe('cwdFromSlug', () => {
       const slug = normalized.replace(/^\//, '').replace(/[/.]/g, '-');
 
       expect(cwdFromSlug(slug)).toBe(normalized);
+      expect(cwdFromSlug(slug.replaceAll('_', '-'))).toBe(normalized);
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }

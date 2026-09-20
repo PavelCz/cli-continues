@@ -1,6 +1,9 @@
 import * as fs from 'node:fs';
 import { IS_WINDOWS } from './platform.js';
 
+// Missing dash-heavy paths otherwise expand into 4^(dash count) filesystem probes.
+const MAX_CANDIDATE_CHECKS = 10_000;
+
 /**
  * Derive cwd from a slug directory name using recursive backtracking.
  * Slugs replace `/` and `.` with `-` in the directory name, e.g.:
@@ -12,7 +15,19 @@ import { IS_WINDOWS } from './platform.js';
 export function cwdFromSlug(slug: string): string {
   const parts = slug.split('-');
   let best: string | null = null;
+  let candidateChecks = 0;
+  const checkedPaths = new Map<string, boolean>();
   const isDriveSlug = parts.length > 0 && /^[A-Za-z]$/.test(parts[0] || '');
+
+  function exists(candidate: string): boolean {
+    const cached = checkedPaths.get(candidate);
+    if (cached !== undefined) return cached;
+    if (candidateChecks >= MAX_CANDIDATE_CHECKS) return false;
+    candidateChecks++;
+    const found = fs.existsSync(candidate);
+    checkedPaths.set(candidate, found);
+    return found;
+  }
 
   function candidatePaths(segments: string[]): string[] {
     const unixPath = '/' + segments.join('/');
@@ -27,11 +42,12 @@ export function cwdFromSlug(slug: string): string {
   }
 
   function resolve(idx: number, segments: string[]): void {
-    if (best) return; // already found a match
+    if (best || candidateChecks >= MAX_CANDIDATE_CHECKS) return;
 
     if (idx >= parts.length) {
       for (const p of candidatePaths(segments)) {
-        if (fs.existsSync(p)) {
+        if (candidateChecks >= MAX_CANDIDATE_CHECKS) break;
+        if (exists(p)) {
           best = p;
           break;
         }
@@ -41,8 +57,12 @@ export function cwdFromSlug(slug: string): string {
 
     const part = parts[idx];
 
-    // Option 1: treat dash as path separator (new directory)
-    resolve(idx + 1, [...segments, part]);
+    // A separator finalizes the current directory. Prune nonexistent prefixes
+    // before exploring descendants, preserving the original candidate order
+    // while leaving the probe budget available for real dash/underscore paths.
+    if (segments.length === 0 || candidatePaths(segments).some(exists)) {
+      resolve(idx + 1, [...segments, part]);
+    }
     if (best) return;
 
     if (segments.length > 0) {
