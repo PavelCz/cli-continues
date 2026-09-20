@@ -6,11 +6,14 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { extractAntigravityContext, parseAntigravitySessions } from '../parsers/antigravity.js';
+import { adapters } from '../parsers/registry.js';
 import type { ConversationMessage, SessionContext, SessionSource, UnifiedSession } from '../types/index.js';
 import { generateHandoffMarkdown, getSourceLabels } from '../utils/markdown.js';
 import {
   createAmpFixture,
+  createAntigravityCliFixture,
   createAntigravityFixture,
   createClaudeFixture,
   createClineFixture,
@@ -28,6 +31,34 @@ import {
   createRooCodeFixture,
   type FixtureDir,
 } from './fixtures/index.js';
+
+describe('Antigravity CLI real-parser conversion paths', () => {
+  it('extracts CLI messages and edits for every target and accepts handoffs from every source', async () => {
+    const fixture = createAntigravityCliFixture();
+    vi.stubEnv('ANTIGRAVITY_CLI_HOME', fixture.root);
+    vi.stubEnv('ANTIGRAVITY_HOME', path.join(fixture.root, 'missing-ide'));
+    vi.stubEnv('ANTIGRAVITY_STATE_DB', path.join(fixture.root, 'missing-state'));
+    vi.stubEnv('ANTIGRAVITY_DISABLE_RPC', '1');
+    try {
+      const [session] = await parseAntigravitySessions();
+      const context = await extractAntigravityContext(session);
+      expect(context.recentMessages).toHaveLength(4);
+      expect(context.filesModified).toContain('/home/user/project/login.ts');
+      expect(context.markdown).toContain('missing token validation');
+      for (const adapter of Object.values(adapters)) {
+        if (adapter.name === 'antigravity') continue;
+        expect(adapter.crossToolArgs(context.markdown, session.cwd)).toContain(context.markdown);
+        expect(adapters.antigravity.crossToolArgs(contexts[adapter.name].markdown, session.cwd)).toEqual([
+          '--prompt-interactive',
+          contexts[adapter.name].markdown,
+        ]);
+      }
+    } finally {
+      vi.unstubAllEnvs();
+      fixture.cleanup();
+    }
+  });
+});
 
 // ─── Fixture-Based Parser Tests ──────────────────────────────────────────────
 

@@ -145,7 +145,7 @@ export async function nativeResume(session: UnifiedSession): Promise<void> {
   if (!adapter) throw new UnknownSourceError(session.source);
   const binaryName = await requireToolBinaryName(session.source);
   await adapter.prepareNativeResume?.(session);
-  await runCommand(binaryName, adapter.nativeResumeArgs(session), cwd);
+  await runCommand(binaryName, adapter.nativeResumeArgs(session, binaryName), cwd);
 }
 
 /**
@@ -199,7 +199,11 @@ export async function crossToolResume(
   const binaryName = await requireToolBinaryName(target);
   const resolved = resolveCrossToolForwarding(target, forwarding);
   const defaultInitArgs = getDefaultHandoffInitArgs(target, resolved.extraArgs);
-  await runCommand(binaryName, [...defaultInitArgs, ...resolved.extraArgs, ...adapter.crossToolArgs(prompt, cwd)], cwd);
+  await runCommand(
+    binaryName,
+    [...defaultInitArgs, ...resolved.extraArgs, ...adapter.crossToolArgs(prompt, cwd, binaryName)],
+    cwd,
+  );
 }
 
 /**

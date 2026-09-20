@@ -191,7 +191,7 @@ Every tool stores sessions differently — different formats, different schemas,
 | Cline | JSON | VS Code `globalStorage/saoudrizwan.claude-dev/tasks/` |
 | Roo Code | JSON | VS Code `globalStorage/rooveterinaryinc.roo-cline/tasks/` |
 | Kilo Code | JSON | VS Code `globalStorage/kilocode.kilo-code/tasks/` |
-| Antigravity | PB + brain artifacts + optional live RPC | `~/.gemini/antigravity/` |
+| Antigravity CLI / IDE | CLI SQLite; IDE PB + brain artifacts + optional live RPC | `~/.gemini/antigravity-cli/`, `~/.gemini/antigravity/` |
 | Kimi CLI | JSONL + JSON | `~/.kimi/sessions/` |
 | Qwen Code | JSONL | `~/.qwen/projects/*/chats/` |
 

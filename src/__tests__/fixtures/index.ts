@@ -997,6 +997,74 @@ export function createAntigravityFixture(): FixtureDir {
   };
 }
 
+/** CLI schema and protobuf paths observed in local Antigravity data (2026-09-20).
+ * Only synthetic message text and paths are used here. */
+export function createAntigravityCliFixture(): FixtureDir {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'test-agy-'));
+  const id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  fs.mkdirSync(path.join(root, 'conversations'));
+  fs.mkdirSync(path.join(root, 'cache'));
+  const varint = (value: number): Buffer => {
+    const bytes: number[] = [];
+    do {
+      const byte = value & 127;
+      value = Math.floor(value / 128);
+      bytes.push(byte | (value ? 128 : 0));
+    } while (value);
+    return Buffer.from(bytes);
+  };
+  const field = (number: number, value: Buffer | string): Buffer => {
+    const bytes = typeof value === 'string' ? Buffer.from(value) : value;
+    return Buffer.concat([varint(number * 8 + 2), varint(bytes.length), bytes]);
+  };
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(root, 'conversations', `${id}.db`));
+  try {
+    db.exec(
+      'CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, metadata BLOB, task_details BLOB, render_info BLOB, step_payload BLOB)',
+    );
+    const insert = db.prepare('INSERT INTO steps (idx, step_type, step_payload) VALUES (?, ?, ?)');
+    insert.run(0, 14, field(19, field(2, 'Fix the authentication bug in login.ts')));
+    insert.run(
+      1,
+      15,
+      field(
+        20,
+        Buffer.concat([
+          field(1, 'I found the missing token validation.'),
+          field(
+            7,
+            Buffer.concat([
+              field(2, 'replace_file_content'),
+              field(3, JSON.stringify({ TargetFile: '/home/user/project/login.ts' })),
+            ]),
+          ),
+        ]),
+      ),
+    );
+    insert.run(2, 14, field(19, field(2, 'Please also add error handling')));
+    insert.run(3, 15, field(20, field(1, 'Done. I added try-catch blocks and proper error messages.')));
+    insert.run(4, 23, field(30, field(4, 'Fix auth bug')));
+  } finally {
+    db.close();
+  }
+  fs.writeFileSync(
+    path.join(root, 'cache', 'conversation_metadata.json'),
+    JSON.stringify({
+      conversations: {
+        [id]: {
+          summary: {
+            Title: 'Fix auth bug',
+            WorkspaceURIs: ['file:///home/user/project'],
+            UpdatedAt: '2026-06-01T00:00:00Z',
+          },
+        },
+      },
+    }),
+  );
+  return { root, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+}
+
 /**
  * Create a temporary directory with Kimi session fixtures
  *

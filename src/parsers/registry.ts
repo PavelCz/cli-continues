@@ -64,7 +64,7 @@ export interface ToolAdapter {
   /** Extract full context for cross-tool handoff */
   extractContext: (session: UnifiedSession, config?: VerbosityConfig) => Promise<SessionContext>;
   /** CLI args to resume a session natively */
-  nativeResumeArgs: (session: UnifiedSession) => string[];
+  nativeResumeArgs: (session: UnifiedSession, binaryName?: string) => string[];
   /**
    * Optional hook run before spawning a native resume. Receives the session
    * with `cwd` already set to the launch directory (e.g. Claude moves the
@@ -72,7 +72,7 @@ export interface ToolAdapter {
    */
   prepareNativeResume?: (session: UnifiedSession) => void | Promise<void>;
   /** CLI args to start with a handoff prompt */
-  crossToolArgs: (prompt: string, cwd: string) => string[];
+  crossToolArgs: (prompt: string, cwd: string, binaryName?: string) => string[];
   /** Display string for the native resume command */
   resumeCommandDisplay: (session: UnifiedSession) => string;
   /** Adapter-level mapping for interactive handoff launch flags */
@@ -213,6 +213,63 @@ function mapGeminiFlags(context: ForwardFlagMapContext): ForwardMapResult {
   }
 
   return { mappedArgs: args };
+}
+
+function mapAntigravityFlags(context: ForwardFlagMapContext): ForwardMapResult {
+  const args: string[] = [];
+  const warnings: string[] = [];
+
+  const autoOccurrences = collectAutoApproveOccurrences(context);
+  const fullAutoOccurrences = context.all('fullAuto');
+  const askOccurrences = context.all('askForApproval');
+  const approvalModeOccurrences = context.all('approvalMode');
+  const permissionModeOccurrences = context.all('permissionMode');
+  const approvalMode = context.latestString('approvalMode')?.toLowerCase();
+  const askForApproval = context.latestString('askForApproval')?.toLowerCase();
+
+  if (
+    autoOccurrences.length > 0 ||
+    fullAutoOccurrences.length > 0 ||
+    approvalMode === 'yolo' ||
+    askForApproval === 'never'
+  ) {
+    context.consume(
+      ...autoOccurrences,
+      ...fullAutoOccurrences,
+      ...askOccurrences,
+      ...approvalModeOccurrences,
+      ...permissionModeOccurrences,
+    );
+    args.push('--dangerously-skip-permissions');
+
+    if (approvalModeOccurrences.length > 0 && approvalMode && approvalMode !== 'yolo') {
+      warnings.push('Antigravity: mapped auto-approve behavior overrides unsupported approval-mode values.');
+    }
+  } else if (askOccurrences.length > 0 || approvalModeOccurrences.length > 0 || permissionModeOccurrences.length > 0) {
+    context.consume(...askOccurrences, ...approvalModeOccurrences, ...permissionModeOccurrences);
+    warnings.push('Antigravity: approval and permission mode forwarding flags are not supported and were ignored.');
+  }
+
+  const sandbox = context.latest('sandbox');
+  if (sandbox) {
+    context.consumeKeys('sandbox');
+    const normalized = String(sandbox.value).toLowerCase();
+    if (sandbox.value === true || ['true', '1', 'yes', 'on', 'enabled'].includes(normalized)) {
+      args.push('--sandbox=true');
+    } else if (['false', '0', 'no', 'off', 'disabled', 'none'].includes(normalized)) {
+      args.push('--sandbox=false');
+    } else {
+      args.push('--sandbox', String(sandbox.value));
+    }
+  }
+
+  const model = context.latestString('model');
+  if (model) {
+    context.consumeKeys('model');
+    args.push('--model', model);
+  }
+
+  return { mappedArgs: args, warnings };
 }
 
 function mapClaudeFlags(context: ForwardFlagMapContext): ForwardMapResult {
@@ -893,19 +950,21 @@ register({
 // ── Antigravity ──────────────────────────────────────────────────────
 register({
   name: 'antigravity',
-  label: 'Antigravity',
+  label: 'Antigravity CLI',
   color: chalk.hex('#A8DADC'),
-  storagePath: '~/.gemini/antigravity/',
+  storagePath: '~/.gemini/antigravity-cli/ (CLI), ~/.gemini/antigravity/ (IDE)',
   envVar: 'ANTIGRAVITY_HOME',
   // Antigravity's parser falls back to GEMINI_CLI_HOME when ANTIGRAVITY_HOME
   // is unset, so changes to that var must also invalidate the index cache.
-  extraEnvVars: ['GEMINI_CLI_HOME', 'ANTIGRAVITY_STATE_DB'],
-  binaryName: 'antigravity',
+  extraEnvVars: ['GEMINI_CLI_HOME', 'ANTIGRAVITY_CLI_HOME', 'ANTIGRAVITY_STATE_DB'],
+  binaryName: 'agy',
+  binaryFallbacks: ['antigravity'],
   parseSessions: parseAntigravitySessions,
   extractContext: extractAntigravityContext,
-  nativeResumeArgs: () => [],
-  crossToolArgs: (prompt) => [prompt],
-  resumeCommandDisplay: () => `antigravity`,
+  nativeResumeArgs: (s, binary) => (binary === 'antigravity' ? [] : ['--conversation', s.id]),
+  crossToolArgs: (prompt, _cwd, binary) => (binary === 'antigravity' ? [prompt] : ['--prompt-interactive', prompt]),
+  resumeCommandDisplay: (s) => `agy --conversation ${s.id} (IDE fallback: antigravity)`,
+  mapHandoffFlags: mapAntigravityFlags,
 });
 
 // ── Kimi CLI ──────────────────────────────────────────────────────────

@@ -126,6 +126,41 @@ describe('cross-tool forwarding', () => {
     expect(resolved.passthroughArgs).toEqual([]);
   });
 
+  it('maps antigravity cli forwarding and resume commands to agy', () => {
+    const session: UnifiedSession = {
+      id: 'abc123456789',
+      source: 'antigravity',
+      cwd: '/tmp/project',
+      lines: 10,
+      bytes: 120,
+      createdAt: new Date('2026-02-20T00:00:00.000Z'),
+      updatedAt: new Date('2026-02-20T00:00:00.000Z'),
+      originalPath: '/tmp/session.db',
+    };
+
+    const resolved = resolveCrossToolForwarding('antigravity', {
+      rawArgs: ['--allow-all', '--sandbox', 'false', '--model', 'gemini-3-flash'],
+    });
+
+    expect(adapters.antigravity.binaryName).toBe('agy');
+    expect(adapters.antigravity.binaryFallbacks).toEqual(['antigravity']);
+    expect(adapters.antigravity.nativeResumeArgs(session)).toEqual(['--conversation', 'abc123456789']);
+    expect(adapters.antigravity.nativeResumeArgs(session, 'antigravity')).toEqual([]);
+    expect(adapters.antigravity.crossToolArgs('handoff text', '/tmp/project')).toEqual([
+      '--prompt-interactive',
+      'handoff text',
+    ]);
+    expect(adapters.antigravity.crossToolArgs('handoff text', '/tmp/project', 'antigravity')).toEqual(['handoff text']);
+    expect(getResumeCommand(session)).toBe('agy --conversation abc123456789 (IDE fallback: antigravity)');
+    expect(resolved.mappedArgs).toEqual([
+      '--dangerously-skip-permissions',
+      '--sandbox=false',
+      '--model',
+      'gemini-3-flash',
+    ]);
+    expect(resolved.passthroughArgs).toEqual([]);
+  });
+
   it('consumes unsupported approval and permission forwarding for opencode', () => {
     const resolved = resolveCrossToolForwarding('opencode', {
       rawArgs: ['--approval-mode', 'plan', '--permission-mode', 'plan'],
@@ -149,6 +184,7 @@ describe('cross-tool forwarding', () => {
     expect(getDefaultHandoffInitArgs('kiro')).toEqual([]);
     expect(getDefaultHandoffInitArgs('crush')).toEqual([]);
     expect(getDefaultHandoffInitArgs('qwen-code')).toEqual([]);
+    expect(getDefaultHandoffInitArgs('antigravity')).toEqual([]);
 
     expect(getDefaultHandoffInitArgs('codex')).toEqual([
       '-c',
